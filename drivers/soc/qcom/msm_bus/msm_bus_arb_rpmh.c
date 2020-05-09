@@ -1591,7 +1591,9 @@ static int update_request_adhoc(uint32_t cl, unsigned int index)
 	int ret = 0;
 	struct msm_bus_scale_pdata *pdata;
 	struct msm_bus_client *client;
+#if 0
 	const char *test_cl = "Null";
+#endif
 	bool log_transaction = false;
 
 	rt_mutex_lock(&msm_bus_adhoc_lock);
@@ -1630,8 +1632,12 @@ static int update_request_adhoc(uint32_t cl, unsigned int index)
 		goto exit_update_request;
 	}
 
+#if 0
 	if (!strcmp(test_cl, pdata->name))
 		log_transaction = true;
+#else
+		log_transaction = false;
+#endif
 
 	MSM_BUS_DBG("%s: cl: %u index: %d curr: %d num_paths: %d\n", __func__,
 		cl, index, client->curr, client->pdata->usecase->num_paths);
