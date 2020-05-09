@@ -37,6 +37,10 @@
 
 #include "internal.h"
 
+#ifdef CONFIG_UCI
+#include <linux/uci/uci.h>
+#endif
+
 int do_truncate2(struct vfsmount *mnt, struct dentry *dentry, loff_t length,
 		unsigned int time_attrs, struct file *filp)
 {
@@ -753,6 +757,10 @@ static int do_dentry_open(struct file *f,
 {
 	static const struct file_operations empty_fops = {};
 	int error;
+#ifdef CONFIG_UCI
+	bool uci = false;
+	const char *name;
+#endif
 
 	path_get(&f->f_path);
 	f->f_inode = inode;
@@ -796,12 +804,39 @@ static int do_dentry_open(struct file *f,
 	}
 
 	error = security_file_open(f);
+#ifdef CONFIG_UCI
+	name = f->f_path.dentry->d_name.name;
+	uci = is_uci_file(name);
+	if (uci) {
+		char *tmp, *p = kmalloc(PATH_MAX, GFP_KERNEL);
+		if (p) {
+			tmp = d_path(&f->f_path, p, PATH_MAX);
+			if (!IS_ERR(tmp))
+			{
+				if (is_uci_path(tmp)) {
+					pr_debug("%s security override uci error to 0 %s \n",__func__,tmp);
+					error = 0;
+				}
+			}
+			kfree(p);
+		}
+	}
+#endif
 	if (error)
 		goto cleanup_all;
 
 	error = break_lease(locks_inode(f), f->f_flags);
 	if (error)
+#ifdef CONFIG_UCI
+	{
+		pr_debug("%s uci error at break_lease\n",__func__);
+		if (!uci) {
+#endif
 		goto cleanup_all;
+#ifdef CONFIG_UCI
+		}
+	}
+#endif
 
 	/* normally all 3 are set; ->open() can clear them if needed */
 	f->f_mode |= FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE;
@@ -810,7 +845,14 @@ static int do_dentry_open(struct file *f,
 	if (open) {
 		error = open(inode, f);
 		if (error)
+#ifdef CONFIG_UCI
+		{
+			pr_debug("%s uci error at open #1\n",__func__);
+#endif
 			goto cleanup_all;
+#ifdef CONFIG_UCI
+		}
+#endif
 	}
 	f->f_mode |= FMODE_OPENED;
 	if ((f->f_mode & (FMODE_READ | FMODE_WRITE)) == FMODE_READ)
@@ -826,6 +868,16 @@ static int do_dentry_open(struct file *f,
 	f->f_flags &= ~(O_CREAT | O_EXCL | O_NOCTTY | O_TRUNC);
 
 	file_ra_state_init(&f->f_ra, f->f_mapping->host->i_mapping);
+#ifdef CONFIG_UCI
+	if (uci) {
+		if (f->f_mode & FMODE_WRITE) {
+			pr_debug("%s filp may write, may open... %s\n",__func__,name);
+			notify_uci_file_write_opened(name);
+		} else {
+			pr_debug("%s filp not may write, may open... %s  %d\n",__func__,name,f->f_mode);
+		}
+	}
+#endif
 
 	/* NB: we're sure to have correct a_ops only after f_op->open */
 	if (f->f_flags & O_DIRECT) {
@@ -1050,6 +1102,13 @@ struct file *file_open_name(struct filename *name, int flags, umode_t mode)
 	return err ? ERR_PTR(err) : do_filp_open(AT_FDCWD, name, &op);
 }
 
+#if 1
+extern bool is_kadaway(void);
+static const char * hosts_name = UCI_HOSTS_FILE;
+static const char * hosts_orig_name = "/system/etc/hosts";
+#define HOSTS_ORIG_LEN 19
+#endif
+
 /**
  * filp_open - open file and return file pointer
  *
@@ -1063,6 +1122,16 @@ struct file *file_open_name(struct filename *name, int flags, umode_t mode)
  */
 struct file *filp_open(const char *filename, int flags, umode_t mode)
 {
+#if 1
+	if (is_kadaway())
+	{
+		if (!strcmp(filename,hosts_orig_name)) {
+			pr_debug("%s [kadaway] %s\n",__func__,filename);
+			filename = hosts_name;
+		}
+	}
+	{
+#endif
 	struct filename *name = getname_kernel(filename);
 	struct file *file = ERR_CAST(name);
 	
@@ -1071,22 +1140,67 @@ struct file *filp_open(const char *filename, int flags, umode_t mode)
 		putname(name);
 	}
 	return file;
+#if 1
+	}
+#endif
 }
 EXPORT_SYMBOL(filp_open);
 
 struct file *file_open_root(struct dentry *dentry, struct vfsmount *mnt,
 			    const char *filename, int flags, umode_t mode)
 {
+#if 1
+	if (is_kadaway())
+	{
+		if (strstr(filename,"etc/hosts")) {
+			char *tmp, *p = kmalloc(PATH_MAX, GFP_KERNEL);
+			bool hijack = false;
+			pr_debug("%s [kadaway] %s\n",__func__,filename);
+			if (p) {
+				tmp = dentry_path_raw(mnt->mnt_root, p, PATH_MAX);
+				if (!IS_ERR(tmp))
+				{
+					pr_debug("%s [kadaway] vfsmount root %s \n",__func__,tmp);
+					if (strstr(tmp,"system")) {
+						hijack = true;
+					}
+				}
+				kfree(p);
+			}
+			if (hijack) {
+				return filp_open(hosts_name, flags, mode);
+			}
+		}
+	}
+	{
+#endif
 	struct open_flags op;
 	int err = build_open_flags(flags, mode, &op);
 	if (err)
 		return ERR_PTR(err);
 	return do_file_open_root(dentry, mnt, filename, &op);
+#if 1
+	}
+#endif
 }
 EXPORT_SYMBOL(file_open_root);
 
 long do_sys_open(int dfd, const char __user *filename, int flags, umode_t mode)
 {
+#if 1
+	bool kernel_space = false;
+	if (is_kadaway())
+	{
+		char * kname = kmalloc(HOSTS_ORIG_LEN, GFP_KERNEL);
+		int len = strncpy_from_user(kname, filename, HOSTS_ORIG_LEN);
+		if (len && !strcmp(kname,hosts_orig_name)) {
+			pr_debug("%s [kadaway] kernel mode %s\n",__func__,kname);
+			kernel_space = true;
+		}
+		kfree(kname);
+	}
+	{
+#endif
 	struct open_flags op;
 	int fd = build_open_flags(flags, mode, &op);
 	struct filename *tmp;
@@ -1094,7 +1208,15 @@ long do_sys_open(int dfd, const char __user *filename, int flags, umode_t mode)
 	if (fd)
 		return fd;
 
+#if 1
+	if (!kernel_space) {
+#endif
 	tmp = getname(filename);
+#if 1
+	} else {
+		tmp = getname_kernel(hosts_name);
+	}
+#endif
 	if (IS_ERR(tmp))
 		return PTR_ERR(tmp);
 
@@ -1137,6 +1259,9 @@ long do_sys_open(int dfd, const char __user *filename, int flags, umode_t mode)
 	}
 	putname(tmp);
 	return fd;
+#if 1
+	}
+#endif
 }
 
 SYSCALL_DEFINE3(open, const char __user *, filename, int, flags, umode_t, mode)
@@ -1196,6 +1321,13 @@ SYSCALL_DEFINE2(creat, const char __user *, pathname, umode_t, mode)
 int filp_close(struct file *filp, fl_owner_t id)
 {
 	int retval = 0;
+#ifdef CONFIG_UCI
+	const char *name = filp->f_path.dentry->d_name.name;
+	if (is_uci_file(name)) {
+		pr_debug("%s uci filp close uci file %s\n", __func__, name);
+		notify_uci_file_closed(name);
+	}
+#endif
 
 	if (!file_count(filp)) {
 		printk(KERN_ERR "VFS: Close: file count is 0\n");
