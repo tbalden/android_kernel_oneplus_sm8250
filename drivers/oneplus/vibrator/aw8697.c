@@ -3337,6 +3337,25 @@ static ssize_t aw8697_activate_store(struct device *dev,
     return count;
 }
 
+#ifdef CONFIG_UCI
+void set_vibrate_2(int time_ms, int power) {
+}
+
+void set_vibrate(int time_ms)
+{
+	pr_info("%s time_ms = %d\n",__func__,time_ms);
+	set_vibrate_2(time_ms, 50);
+}
+void set_vibrate_boosted(int time_ms)
+{
+	pr_info("%s time_ms = %d\n",__func__,time_ms);
+	set_vibrate_2(time_ms, 100);
+}
+EXPORT_SYMBOL(set_vibrate_2);
+EXPORT_SYMBOL(set_vibrate);
+EXPORT_SYMBOL(set_vibrate_boosted);
+#endif
+
 static ssize_t aw8697_activate_mode_show(struct device *dev,
         struct device_attribute *attr, char *buf)
 {
