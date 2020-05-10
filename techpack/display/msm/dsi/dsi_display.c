@@ -39,6 +39,14 @@
 #include "dsi_iris5_api.h"
 #endif
 #include <linux/oem/boot_mode.h>
+
+#ifdef CONFIG_UCI
+#include <linux/uci/uci.h>
+#endif
+#ifdef CONFIG_UCI_NOTIFICATIONS_SCREEN_CALLBACKS
+#include <linux/notification/notification.h>
+#endif
+
 #define to_dsi_display(x) container_of(x, struct dsi_display, host)
 #define INT_BASE_10 10
 #define NO_OVERRIDE -1
@@ -55,6 +63,7 @@
 
 #define WU_SEED_REGISTER 0x67
 #define UG_SEED_REGISTER 0xB1
+
 
 static char dsi_display_primary[MAX_CMDLINE_PARAM_LEN];
 static char dsi_display_secondary[MAX_CMDLINE_PARAM_LEN];
@@ -2550,6 +2559,15 @@ int dsi_display_set_power(struct drm_connector *connector,
 		DSI_ERR("invalid display/panel\n");
 		return -EINVAL;
 	}
+
+#ifdef CONFIG_UCI_NOTIFICATIONS_SCREEN_CALLBACKS
+	if (power_mode==SDE_MODE_DPMS_LP1 || power_mode==SDE_MODE_DPMS_OFF) { // 5 - fully off / 1 - AOD
+		ntf_screen_off();
+	} else if (power_mode==SDE_MODE_DPMS_OFF) { // && bd->props.state!=2) { // 0 ON (state!= 0x02 it's a transient state while getting out of pocket, ON's 'state'
+				    // Without AOD props state can be 2 as well. Check user inputs instead
+		ntf_screen_on();
+	}
+#endif
 
 	switch (power_mode) {
 	case SDE_MODE_DPMS_LP1:
