@@ -44,6 +44,8 @@
 #include <linux/oem/fsc.h>
 #endif
 
+//#undef CONFIG_UCI
+
 #ifdef CONFIG_UCI
 #include <linux/uci/uci.h>
 #endif
@@ -2171,7 +2173,7 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 {
 	int err;
 #ifdef CONFIG_UCI
-	bool uci = is_uci_path(name);
+	bool uci = name && is_uci_path(name);
 #endif
 	while (*name=='/')
 		name++;
@@ -2185,7 +2187,8 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 
 		err = may_lookup(nd);
 #ifdef CONFIG_UCI
-		if (uci && err==-13) { pr_debug("%s uci overriding may_lookup error. file name %s err %d\n",__func__,name, err); err = 0; }
+		if (uci && err==-13) { //pr_debug("%s uci overriding may_lookup error. file name %s err %d\n",__func__,name, err); 
+			err = 0; }
 #endif
 		if (err)
 			return err;
@@ -3716,13 +3719,13 @@ struct file *do_filp_open(int dfd, struct filename *pathname,
 	int flags = op->lookup_flags;
 	struct file *filp;
 #ifdef CONFIG_UCI
-	bool uci = is_uci_path(pathname->name);
+	bool uci = pathname && is_uci_path(pathname->name);
 	if (uci) {
 		if (op->acc_mode & MAY_WRITE || op->acc_mode & MAY_APPEND) {
-			pr_debug("%s filp may write, may open... %s\n",__func__,pathname->name);
+			//pr_debug("%s filp may write, may open... %s\n",__func__,pathname->name);
 			notify_uci_file_write_opened(pathname->name);
 		} else {
-			pr_debug("%s filp not may write, may open... %s  %d\n",__func__,pathname->name,op->acc_mode);
+			//pr_debug("%s filp not may write, may open... %s  %d\n",__func__,pathname->name,op->acc_mode);
 		}
 	}
 #endif
@@ -3756,13 +3759,13 @@ struct file *do_file_open_root(struct dentry *dentry, struct vfsmount *mnt,
 		return ERR_CAST(filename);
 #ifdef CONFIG_UCI
 	{
-		bool uci = is_uci_path(filename->name) || is_uci_file(filename->name);;
+		bool uci = filename && (is_uci_path(filename->name) || is_uci_file(filename->name));
 		if (uci) {
 			if (op->acc_mode & MAY_WRITE || op->acc_mode & MAY_APPEND) {
-				pr_debug("%s filp may write, may open... %s\n",__func__,filename->name);
+				//pr_debug("%s filp may write, may open... %s\n",__func__,filename->name);
 				notify_uci_file_write_opened(filename->name);
 			} else {
-				pr_debug("%s filp not may write, may open... %s  %d\n",__func__,filename->name,op->acc_mode);
+				//pr_debug("%s filp not may write, may open... %s  %d\n",__func__,filename->name,op->acc_mode);
 			}
 		}
 	}
@@ -3835,15 +3838,15 @@ static struct dentry *filename_create(int dfd, struct filename *name,
 		error = err2;
 		goto fail;
 	}
-	putname(name);
 #ifdef CONFIG_UCI
 	{
-		bool uci = is_uci_path(name->name) || is_uci_file(name->name);
+		bool uci = name && (is_uci_path(name->name) || is_uci_file(name->name));
 		if (uci) {
 			notify_uci_file_write_opened(name->name);
 		}
 	}
 #endif
+	putname(name);
 
 	return dentry;
 fail:
