@@ -37,9 +37,13 @@
 
 #include "internal.h"
 
+//#undef CONFIG_UCI
+
 #ifdef CONFIG_UCI
 #include <linux/uci/uci.h>
 #endif
+
+#define KADAWAY
 
 int do_truncate2(struct vfsmount *mnt, struct dentry *dentry, loff_t length,
 		unsigned int time_attrs, struct file *filp)
@@ -1102,7 +1106,7 @@ struct file *file_open_name(struct filename *name, int flags, umode_t mode)
 	return err ? ERR_PTR(err) : do_filp_open(AT_FDCWD, name, &op);
 }
 
-#if 1
+#ifdef KADAWAY
 extern bool is_kadaway(void);
 static const char * hosts_name = UCI_HOSTS_FILE;
 static const char * hosts_orig_name = "/system/etc/hosts";
@@ -1122,7 +1126,7 @@ static const char * hosts_orig_name = "/system/etc/hosts";
  */
 struct file *filp_open(const char *filename, int flags, umode_t mode)
 {
-#if 1
+#ifdef KADAWAY
 	if (is_kadaway())
 	{
 		if (!strcmp(filename,hosts_orig_name)) {
@@ -1140,7 +1144,7 @@ struct file *filp_open(const char *filename, int flags, umode_t mode)
 		putname(name);
 	}
 	return file;
-#if 1
+#ifdef KADAWAY
 	}
 #endif
 }
@@ -1149,7 +1153,7 @@ EXPORT_SYMBOL(filp_open);
 struct file *file_open_root(struct dentry *dentry, struct vfsmount *mnt,
 			    const char *filename, int flags, umode_t mode)
 {
-#if 1
+#ifdef KADAWAY
 	if (is_kadaway())
 	{
 		if (strstr(filename,"etc/hosts")) {
@@ -1179,7 +1183,7 @@ struct file *file_open_root(struct dentry *dentry, struct vfsmount *mnt,
 	if (err)
 		return ERR_PTR(err);
 	return do_file_open_root(dentry, mnt, filename, &op);
-#if 1
+#ifdef KADAWAY
 	}
 #endif
 }
@@ -1187,7 +1191,7 @@ EXPORT_SYMBOL(file_open_root);
 
 long do_sys_open(int dfd, const char __user *filename, int flags, umode_t mode)
 {
-#if 1
+#ifdef KADAWAY
 	bool kernel_space = false;
 	if (is_kadaway())
 	{
@@ -1208,11 +1212,11 @@ long do_sys_open(int dfd, const char __user *filename, int flags, umode_t mode)
 	if (fd)
 		return fd;
 
-#if 1
+#ifdef KADAWAY
 	if (!kernel_space) {
 #endif
 	tmp = getname(filename);
-#if 1
+#ifdef KADAWAY
 	} else {
 		tmp = getname_kernel(hosts_name);
 	}
@@ -1259,7 +1263,7 @@ long do_sys_open(int dfd, const char __user *filename, int flags, umode_t mode)
 	}
 	putname(tmp);
 	return fd;
-#if 1
+#ifdef KADAWAY
 	}
 #endif
 }
