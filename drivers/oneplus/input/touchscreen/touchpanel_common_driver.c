@@ -34,6 +34,10 @@
 #include "samsung/s6sy761/sec_drivers_s6sy761.h"
 #include "util_interface/touch_interfaces.h"
 
+#ifdef CONFIG_UCI
+#include <linux/inputfilter/sweep2sleep.h>
+#endif
+
 /*******Part0:LOG TAG Declear************************/
 #define TPD_PRINT_POINT_NUM 150
 #define TPD_DEVICE "touchpanel"
@@ -256,8 +260,20 @@ static void tp_touch_down(struct touchpanel_data *ts, struct point_info points, 
 			if(!CHK_BIT(ts->irq_slot, (1<<id)))
 				TPD_DETAIL("first touch point id %d [%4d %4d %4d]\n", id, points.x, points.y, points.z);
 		}
+#ifdef CONFIG_UCI
+	{
+	int x2, y2;
+	int x = points.x;
+	int y = points.y;
+	bool frozen_coords = s2s_freeze_coords(&x2,&y2,x,y);
+	if (frozen_coords) { x = x2; y = y2; }
+	input_report_abs(ts->input_dev, ABS_MT_POSITION_X, x);
+	input_report_abs(ts->input_dev, ABS_MT_POSITION_Y, y);
+	}
+#else
 	input_report_abs(ts->input_dev, ABS_MT_POSITION_X, points.x);
 	input_report_abs(ts->input_dev, ABS_MT_POSITION_Y, points.y);
+#endif
 
 	TPD_SPECIFIC_PRINT(point_num, "Touchpanel id %d :Down[%4d %4d %4d]\n", id, points.x, points.y, points.z);
 
