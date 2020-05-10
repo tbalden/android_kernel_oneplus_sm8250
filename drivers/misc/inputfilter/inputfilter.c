@@ -2654,6 +2654,7 @@ static bool ts_input_filter(struct input_handle *handle,
 		if ( (strcmp("fts",handle->dev->name) 
 				&& strcmp("sec_touchscreen",handle->dev->name)
 				&& strcmp("synaptics_dsx",handle->dev->name)
+				&& strcmp("touchpanel",handle->dev->name)
 			)
 			|| (type != EV_SYN && type != EV_MSC)) {
 			// from touchscreen SYNC and MSC events are not necessarily user inputs! only signal input if not such..
@@ -2966,6 +2967,7 @@ static void ts_input_event(struct input_handle *handle, unsigned int type,
 static int ts_input_dev_filter(struct input_dev *dev) {
 	pr_info("%s %s\n",__func__, dev->name);
 	if (
+		strstr(dev->name, "touchpanel") ||
 		strstr(dev->name, "fts") ||
 		strstr(dev->name, "sec_touchscreen") ||
 		strstr(dev->name, "himax-touchscreen") ||
@@ -2993,6 +2995,8 @@ static int ts_input_dev_filter(struct input_dev *dev) {
 		if (strstr(dev->name, "max1187x_touchscreen_0")) ts_device = dev;
 		// op6
 		if (strstr(dev->name, "synaptics,s3320")) ts_device = dev;
+		// op8/pro
+		if (strstr(dev->name, "touchpanel")) ts_device = dev;
 
 		return 0;
 	} else {
