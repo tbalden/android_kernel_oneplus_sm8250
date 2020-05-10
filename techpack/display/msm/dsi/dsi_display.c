@@ -2563,7 +2563,7 @@ int dsi_display_set_power(struct drm_connector *connector,
 #ifdef CONFIG_UCI_NOTIFICATIONS_SCREEN_CALLBACKS
 	if (power_mode==SDE_MODE_DPMS_LP1 || power_mode==SDE_MODE_DPMS_OFF) { // 5 - fully off / 1 - AOD
 		ntf_screen_off();
-	} else if (power_mode==SDE_MODE_DPMS_OFF) { // && bd->props.state!=2) { // 0 ON (state!= 0x02 it's a transient state while getting out of pocket, ON's 'state'
+	} else if (power_mode==SDE_MODE_DPMS_ON) { // && bd->props.state!=2) { // 0 ON (state!= 0x02 it's a transient state while getting out of pocket, ON's 'state'
 				    // Without AOD props state can be 2 as well. Check user inputs instead
 		ntf_screen_on();
 	}
