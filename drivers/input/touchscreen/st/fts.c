@@ -57,6 +57,10 @@
 #include "fts_lib/ftsTool.h"
 #include "linux/moduleparam.h"
 
+#ifdef CONFIG_UCI
+#include <linux/inputfilter/sweep2sleep.h>
+#endif
+
 #define LINK_KOBJ_NAME "tp"
 
 #define FTS_DVDD_VOL_MIN 1800000
@@ -2815,12 +2819,20 @@ static void fts_enter_pointer_event_handler(struct fts_ts_info *info,
 		input_report_key(info->input_dev, BTN_TOUCH, 1);
 		input_report_key(info->input_dev, BTN_TOOL_FINGER, 1);
 	}
+#ifdef CONFIG_UCI
+	{
+	int x2, y2;
+	bool frozen_coords = s2s_freeze_coords(&x2,&y2,x,y);
+	if (frozen_coords) { x = x2; y = y2; }
+#endif
 	input_report_abs(info->input_dev, ABS_MT_POSITION_X, x);
 	input_report_abs(info->input_dev, ABS_MT_POSITION_Y, y);
 	input_report_abs(info->input_dev, ABS_MT_TOUCH_MAJOR, major);
 	input_report_abs(info->input_dev, ABS_MT_TOUCH_MINOR, minor);
 	input_report_abs(info->input_dev, ABS_MT_DISTANCE, distance);
-
+#ifdef CONFIG_UCI
+	}
+#endif
 	if (!info->aoi_notify_enabled)
 		goto no_report;
 
