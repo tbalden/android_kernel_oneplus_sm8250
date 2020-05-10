@@ -3257,6 +3257,88 @@ static ssize_t aw8697_activate_show(struct device *dev,
     return snprintf(buf, PAGE_SIZE, "%d\n", aw8697->state);
 }
 
+#ifdef CONFIG_UCI
+static struct aw8697 *__aw8697;
+static int __activate(unsigned int val, int duration, int strength) {
+    struct aw8697 *aw8697 = __aw8697;
+    int count = 0;
+    int rtp_is_going_on = 0;
+    static unsigned int  val_pre;
+
+    if (aw8697 == NULL) return 1;
+
+    // duration
+    if (duration > 0)
+        aw8697->duration = duration;
+
+    // strength
+    mutex_lock(&aw8697->lock);
+    aw8697->gain = strength;
+    aw8697_haptic_set_gain(aw8697, aw8697->gain);
+    mutex_unlock(&aw8697->lock);
+
+    // activate
+
+    /*OP add for juge rtp on begin*/
+    rtp_is_going_on = aw8697_haptic_juge_RTP_is_going_on(aw8697);
+    if (rtp_is_going_on && aw8697->rtp_is_playing)
+       return count;
+    if (!aw8697->ram_init)
+       return count;
+    /*OP add for juge rtp on end*/
+
+    if (val != 0 && val != 1)
+        return count;
+    if (val_pre != val)
+       pr_info("%s: value=%d\n", __FUNCTION__, val);
+    val_pre = val;
+    mutex_lock(&aw8697->lock);
+/*for type Android OS's vibrator 20181225 begin*/
+/*set mode as RAM*/
+	aw8697->activate_mode = AW8697_HAPTIC_ACTIVATE_RAM_MODE;
+/*set wave number,index*/
+    if (check_factory_mode() && aw8697->count_go)
+        aw8697->index = 19;/* index 19sine 170hz*/
+    else
+        aw8697->index = 10;/*sine 170hz*/
+    aw8697_haptic_set_repeat_wav_seq(aw8697, aw8697->index);
+/*for type Android OS's vibrator 20181225  end*/
+    if (val == 0)
+       mdelay(10);
+	aw8697->state = val;
+	if (val == 0) {
+		aw8697_haptic_stop(aw8697);
+		aw8697_haptic_set_rtp_aei(aw8697, false);
+		aw8697_interrupt_clear(aw8697);
+		aw8697->sin_add_flag = 0;
+		pr_info("%s: value=%d\n", __FUNCTION__, val);
+	} else {
+			if (check_factory_mode()) {
+				aw8697->rtp_file_num = 114;//Number for AT vibration
+				aw8697->sin_add_flag = 0;
+			} else {
+					if (aw8697->duration <= 500) {
+						aw8697->sin_add_flag = 0;
+						val = (aw8697->duration - 1)/20;
+						aw8697->rtp_file_num = val+AW8697_LONG_INDEX_HEAD;
+					} else {
+						aw8697->sin_add_flag = 1;
+						val = 25;//aw8697->duration/20 = 500/20
+						aw8697->rtp_file_num = 113;
+					}
+			}
+			pr_info("%s: aw8697->rtp_file_num=%d\n", __FUNCTION__, aw8697->rtp_file_num);
+			aw8697_haptic_stop(aw8697);
+			aw8697_haptic_set_rtp_aei(aw8697, false);
+			aw8697_interrupt_clear(aw8697);
+			queue_work(system_highpri_wq, &aw8697->rtp_work);
+	}
+	mutex_unlock(&aw8697->lock);
+	return 0;
+}
+
+#endif
+
 static ssize_t aw8697_activate_store(struct device *dev,
         struct device_attribute *attr, const char *buf, size_t count)
 {
@@ -3339,17 +3421,18 @@ static ssize_t aw8697_activate_store(struct device *dev,
 
 #ifdef CONFIG_UCI
 void set_vibrate_2(int time_ms, int power) {
+	__activate(1,time_ms,power);
 }
 
 void set_vibrate(int time_ms)
 {
-	pr_info("%s time_ms = %d\n",__func__,time_ms);
+	pr_info("%s aw8697 time_ms = %d\n",__func__,time_ms);
 	set_vibrate_2(time_ms, 50);
 }
 void set_vibrate_boosted(int time_ms)
 {
-	pr_info("%s time_ms = %d\n",__func__,time_ms);
-	set_vibrate_2(time_ms, 100);
+	pr_info("%s aw8697 time_ms = %d\n",__func__,time_ms);
+	set_vibrate_2(time_ms, 128);
 }
 EXPORT_SYMBOL(set_vibrate_2);
 EXPORT_SYMBOL(set_vibrate);
@@ -5956,7 +6039,9 @@ static int aw8697_i2c_probe(struct i2c_client *i2c, const struct i2c_device_id *
        pr_info("Unable to register fb_notifier: %d\n", ret);
 /* add haptic audio tp mask end */
     pr_info("%s probe completed successfully!\n", __func__);
-
+#ifdef CONFIG_UCI
+    __aw8697 = aw8697;
+#endif
     return 0;
 
 err_sysfs:
