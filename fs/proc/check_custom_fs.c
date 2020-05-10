@@ -109,9 +109,6 @@ static void uci_user_listener(void) {
 	pr_info("%s uci_kadaway %d\n",__func__,uci_kadaway);
 }
 bool is_kadaway(void) {
-	//do_check(); // don't call this here, fs/open init does not have working queues yet.
-	//if (cfs_work_queue && !finished) do_check();
-	//pr_info("%s kadaway %d\n",__func__,uci_kadaway && kadaway);
 	return kadaway && uci_kadaway;
 }
 EXPORT_SYMBOL(is_kadaway);
@@ -119,9 +116,11 @@ EXPORT_SYMBOL(is_kadaway);
 static bool uci_user_listener_added = false;
 // call this from a non atomic contet, like init
 void init_custom_fs(void) {
-//	if (cfs_work_queue == NULL) {
-//		cfs_work_queue = create_singlethread_workqueue("customfs");
-//	}
+#if 0
+	if (cfs_work_queue == NULL) {
+		cfs_work_queue = create_singlethread_workqueue("customfs");
+	}
+#endif
 	if (!uci_user_listener_added)
 		uci_add_user_listener(uci_user_listener);
 	uci_user_listener_added = true;
