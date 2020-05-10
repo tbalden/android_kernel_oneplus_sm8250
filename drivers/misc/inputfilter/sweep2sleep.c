@@ -843,9 +843,9 @@ static void ntf_listener(char* event, int num_param, char* str_param) {
 
 static int input_dev_filter(struct input_dev *dev) {
 	pr_info("%s sweep2sleep device filter check. Device: %s\n",__func__,dev->name);
-	if (strstr(dev->name, "qpnp_pon")) {
+/*	if (strstr(dev->name, "qpnp_pon")) {
 		sweep2sleep_pwrdev = dev;
-	}
+	}*/
 	if (strstr(dev->name, "synaptics,s3320")) {
 		return 0;
 	} else
@@ -853,6 +853,9 @@ static int input_dev_filter(struct input_dev *dev) {
 		return 0;
 	} else
 	if (strstr(dev->name, "fts")) {
+		return 0;
+	} else
+	if (strstr(dev->name, "touchpanel")) { // oneplus driver
 		return 0;
 	} else
 	if (strstr(dev->name, "sec_touchscreen")) {
@@ -940,7 +943,7 @@ static int __init sweep2sleep_init(void)
 {
 	int rc = 0;
 
-/*	sweep2sleep_pwrdev = input_allocate_device();
+	sweep2sleep_pwrdev = input_allocate_device();
 	if (!sweep2sleep_pwrdev) {
 		pr_err("Failed to allocate sweep2sleep_pwrdev\n");
 		goto err_alloc_dev;
@@ -956,7 +959,7 @@ static int __init sweep2sleep_init(void)
 		pr_err("%s: input_register_device err=%d\n", __func__, rc);
 		goto err_input_dev;
 	}
-*/
+
 	s2s_input_wq = create_workqueue("s2s_iwq");
 	if (!s2s_input_wq) {
 		pr_err("%s: Failed to create workqueue\n", __func__);
@@ -981,10 +984,8 @@ static int __init sweep2sleep_init(void)
         uci_add_sys_listener(uci_sys_listener);
         ntf_add_listener(ntf_listener);
 
-//err_input_dev:
-//	input_free_device(sweep2sleep_pwrdev);
-
-//err_alloc_dev:
+err_input_dev:
+err_alloc_dev:
 	pr_info("%s done\n", __func__);
 	return 0;
 }
@@ -994,8 +995,8 @@ static void __exit sweep2sleep_exit(void)
 	kobject_del(sweep2sleep_kobj);
 	input_unregister_handler(&s2s_input_handler);
 	destroy_workqueue(s2s_input_wq);
-//	input_unregister_device(sweep2sleep_pwrdev);
-//	input_free_device(sweep2sleep_pwrdev);
+	input_unregister_device(sweep2sleep_pwrdev);
+	input_free_device(sweep2sleep_pwrdev);
 
 	return;
 }
