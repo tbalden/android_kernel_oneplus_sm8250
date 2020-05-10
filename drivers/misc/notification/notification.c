@@ -23,15 +23,15 @@
 #include <linux/mm.h>
 //file operation-
 
-//#define CONFIG_MSM_RDM_NOTIFY
-#undef CONFIG_MSM_RDM_NOTIFY
+#define CONFIG_MSM_DRM_NOTIFY
+//#undef CONFIG_MSM_DRM_NOTIFY
 #undef CONFIG_FB
 
 #include <linux/notifier.h>
 #include <linux/fb.h>
 
 #if defined(CONFIG_UCI_NOTIFICATIONS_SCREEN_CALLBACKS)
-#elif defined(CONFIG_MSM_RDM_NOTIFY)
+#elif defined(CONFIG_MSM_DRM_NOTIFY)
 #include <linux/msm_drm_notify.h>
 #endif
 
@@ -53,7 +53,7 @@ MODULE_LICENSE("GPL");
 #if defined(CONFIG_UCI_NOTIFICATIONS_SCREEN_CALLBACKS)
 #elif defined(CONFIG_FB)
 struct notifier_block *uci_ntf_fb_notifier;
-#elif defined(CONFIG_MSM_RDM_NOTIFY)
+#elif defined(CONFIG_MSM_DRM_NOTIFY)
 struct notifier_block *uci_ntf_msm_drm_notif;
 #endif
 
@@ -279,7 +279,7 @@ static int fb_notifier_callback(struct notifier_block *self,
 }
 
 
-#elif defined(CONFIG_MSM_RDM_NOTIFY)
+#elif defined(CONFIG_MSM_DRM_NOTIFY)
 static int first_unblank = 1;
 
 static int fb_notifier_callback(
@@ -531,7 +531,7 @@ static int __init ntf_init(void)
 	uci_ntf_fb_notifier = kzalloc(sizeof(struct notifier_block), GFP_KERNEL);;
 	uci_ntf_fb_notifier->notifier_call = fb_notifier_callback;
 	fb_register_client(uci_ntf_fb_notifier);
-#elif defined(CONFIG_MSM_RDM_NOTIFY)
+#elif defined(CONFIG_MSM_DRM_NOTIFY)
         uci_ntf_msm_drm_notif = kzalloc(sizeof(struct notifier_block), GFP_KERNEL);;
         uci_ntf_msm_drm_notif->notifier_call = fb_notifier_callback;
         rc = msm_drm_register_client(uci_ntf_msm_drm_notif);
