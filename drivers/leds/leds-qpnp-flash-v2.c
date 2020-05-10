@@ -2286,6 +2286,9 @@ static int qpnp_flash_led_parse_each_led_dt(struct qpnp_flash_led *led,
 		return qpnp_flash_led_parse_hw_strobe_dt(fnode);
 
 #ifdef CONFIG_UCI
+//#define DUMMY_UCI
+#ifdef DUMMY_UCI
+#else
 	{
 	struct led_classdev *led_cdev = &fnode->cdev;
 	pr_info("%s flash register classdev %s\n",__func__,(char *)fnode->cdev.name);
@@ -2319,10 +2322,16 @@ static int qpnp_flash_led_parse_each_led_dt(struct qpnp_flash_led *led,
         }
 	}
 #endif
+#endif
 	return 0;
 }
 
 #ifdef CONFIG_UCI
+#ifdef DUMMY_UCI
+void qpnp_torch_main(int led0_lvl, int led1_lvl) {
+        pr_info("%s __ enter t\n",__func__);
+}
+#else
 void qpnp_torch_main(int led0_lvl, int led1_lvl) {
         pr_info("%s __ enter t\n",__func__);
 
@@ -2352,6 +2361,7 @@ void qpnp_torch_main(int led0_lvl, int led1_lvl) {
         }
         pr_info("%s __ exit t\n",__func__);
 }
+#endif
 EXPORT_SYMBOL(qpnp_torch_main);
 #endif
 
