@@ -8,10 +8,11 @@
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 
+#if 1
 static bool done = false;
-
 static DEFINE_SPINLOCK(show_lock);
 static bool magisk = true;
+#endif
 
 extern bool is_magisk(void);
 extern bool is_magisk_sync(void);
