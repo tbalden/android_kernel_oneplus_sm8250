@@ -239,9 +239,14 @@ extern void msm_cpuidle_set_sleep_disable(bool disable);
 static bool face_down_hr = false;
 static bool proximity = false;
 static bool in_pocket = false;
+static int notf_booster_perc = 95;
+static int vib_booster_perc = 70;
 
 int uci_get_notification_booster_overdrive_perc(void) {
-    return uci_get_user_property_int_mm("notification_booster_overdrive_perc", 95, 50, 100);
+    return notf_booster_perc;
+}
+int uci_get_vib_booster_overdrive_perc(void) {
+    return vib_booster_perc;
 }
 
 // register sys uci listener
@@ -256,11 +261,15 @@ static void uci_sys_listener(void) {
     in_pocket = !face_down_hr && proximity;
 }
 
-static int boost__only_in_pocket = false;
+static int boost_only_in_pocket = false;
+static int vib_override = false;
 
 static void uci_user_listener(void) {
     //pr_info("%s [VIB] uci user parse happened...\n",__func__);
-    boost__only_in_pocket = !!uci_get_user_property_int_mm("boost_only_in_pocket", 0, 0, 1);
+    boost_only_in_pocket = !!uci_get_user_property_int_mm("boost_only_in_pocket", 0, 0, 1);
+    notf_booster_perc = uci_get_user_property_int_mm("notification_booster_overdrive_perc", 95, 50, 100);
+    vib_override = !!uci_get_user_property_int_mm("vibration_power_set", 0, 0, 1);
+    vib_booster_perc = uci_get_user_property_int_mm("notification_booster_overdrive_perc", 70, 0, 100);
 }
 
 #if 0
@@ -275,11 +284,9 @@ static int smart_get_boost_on(void) {
 }
 #endif
 
-static bool last_ext_set_index_is_non_click = false;
 
 static int should_boost(void) {
-    //if (ntf_is_screen_on() && ntf_wake_by_user()) return 0;
-    if (boost__only_in_pocket && in_pocket) return (last_ext_set_index_is_non_click||!ntf_is_screen_on())?1:0;
+    if (boost_only_in_pocket && in_pocket) return !ntf_is_screen_on();
     return 0;
 }
 
@@ -900,9 +907,30 @@ static int aw8697_haptic_set_bst_peak_cur(struct aw8697 *aw8697, unsigned char p
     return 0;
 }
 
+#ifdef CONFIG_UCI_NOTIFICATIONS
+static bool override_gain_for_notif = false;
+#endif
+
 static int aw8697_haptic_set_gain(struct aw8697 *aw8697, unsigned char gain)
 {
+#ifdef CONFIG_UCI_NOTIFICATIONS
+	int val = gain;
+	if (vib_override) {
+		val =  uci_get_vib_booster_overdrive_perc() * gain / 30;
+		if (val > 255)
+			val = 255;
+		if (val<1) val = 1;
+	}
+	if (should_boost() && override_gain_for_notif) {
+		val =  uci_get_notification_booster_overdrive_perc() * gain / 30;
+		if (val > 255)
+			val = 255;
+		if (val<1) val = 1;
+	}
+	gain = (unsigned char)val;
+#endif
     aw8697_i2c_write(aw8697, AW8697_REG_DATDBG, gain);
+
     return 0;
 }
 
@@ -3321,6 +3349,8 @@ static int __activate(unsigned int val, int duration, int strength) {
     static unsigned int  val_pre;
 
     if (aw8697 == NULL) return 1;
+    // internal boosting - shouldn't override gain for notif boosting, set it false
+    override_gain_for_notif = false;
 
     // duration
     if (duration > 0)
@@ -3467,6 +3497,10 @@ static ssize_t aw8697_activate_store(struct device *dev,
 			aw8697_haptic_stop(aw8697);
 			aw8697_haptic_set_rtp_aei(aw8697, false);
 			aw8697_interrupt_clear(aw8697);
+#ifdef CONFIG_UCI_NOTIFICATIONS
+			// haptics - shouldn't override gain for notif boosting, set it false
+			override_gain_for_notif = false;
+#endif
 			queue_work(system_highpri_wq, &aw8697->rtp_work);
 	}
 	mutex_unlock(&aw8697->lock);
@@ -3929,7 +3963,11 @@ static ssize_t aw8697_rtp_store(struct device *dev, struct device_attribute *att
 	    pr_info("%s: ntf_vibration calling on RTP vib work: val = %d\n",__func__,val);
 	    if (should_boost()) {
 		    pr_info("%s: should boost!\n",__func__);
-		    // TODO set gains
+		    // this is a notf, set overrid_gain_for_notif flag accordingly
+		    override_gain_for_notif = true;
+	    } else {
+		    // shoudln't boost, set it false...
+		    override_gain_for_notif = false;
 	    }
 	    ntf_vibration(200);
 #endif
