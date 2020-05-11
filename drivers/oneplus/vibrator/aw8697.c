@@ -36,6 +36,11 @@
 #include <linux/fb.h>
 #include <linux/vmalloc.h>
 
+#ifdef CONFIG_UCI_NOTIFICATIONS
+#include <linux/notification/notification.h>
+#include <linux/uci/uci.h>
+#endif
+
 
 /******************************************************
  *
@@ -229,6 +234,56 @@ struct aw8697 *g_aw8697;
 static int aw8697_haptic_get_f0(struct aw8697 *aw8697);
 static bool check_factory_mode(void);
 extern void msm_cpuidle_set_sleep_disable(bool disable);
+
+#ifdef CONFIG_UCI_NOTIFICATIONS
+static bool face_down_hr = false;
+static bool proximity = false;
+static bool in_pocket = false;
+
+int uci_get_notification_booster_overdrive_perc(void) {
+    return uci_get_user_property_int_mm("notification_booster_overdrive_perc", 95, 50, 100);
+}
+
+// register sys uci listener
+static void uci_sys_listener(void) {
+    // TODO use ntf listener instead
+
+    pr_info("%s [VIB] uci sys parse happened...\n",__func__);
+    proximity = !!uci_get_sys_property_int_mm("proximity", 1,0,1);
+    face_down_hr = !!uci_get_sys_property_int_mm("face_down_hr", 0,0,1);
+    // check if perfectly horizontal facedown is not true, and in proximity.
+    // ...(so it's supposedly not on table, but in pocket) then in_pocket = true
+    in_pocket = !face_down_hr && proximity;
+}
+
+static int boost__only_in_pocket = false;
+
+static void uci_user_listener(void) {
+    //pr_info("%s [VIB] uci user parse happened...\n",__func__);
+    boost__only_in_pocket = !!uci_get_user_property_int_mm("boost_only_in_pocket", 0, 0, 1);
+}
+
+#if 0
+static int smart_get_boost_on(void) {
+    int level = smart_get_notification_level(NOTIF_VIB_BOOSTER);
+    int ret = 1;
+    if (level != NOTIF_DEFAULT) {
+        ret = 0; // should suspend boosting if not DEFAULT level
+    }
+    pr_info("%s smart_notif =========== level: %d  notif vib should boost %d \n",__func__, level, ret);
+    return ret;
+}
+#endif
+
+static bool last_ext_set_index_is_non_click = false;
+
+static int should_boost(void) {
+    //if (ntf_is_screen_on() && ntf_wake_by_user()) return 0;
+    if (boost__only_in_pocket && in_pocket) return (last_ext_set_index_is_non_click||!ntf_is_screen_on())?1:0;
+    return 0;
+}
+
+#endif
 
 /******************************************************
  *
@@ -3870,6 +3925,14 @@ static ssize_t aw8697_rtp_store(struct device *dev, struct device_attribute *att
                 aw8697->rtp_file_num = val;
         }
         if(val) {
+#ifdef CONFIG_UCI_NOTIFICATIONS
+	    pr_info("%s: ntf_vibration calling on RTP vib work: val = %d\n",__func__,val);
+	    if (should_boost()) {
+		    pr_info("%s: should boost!\n",__func__);
+		    // TODO set gains
+	    }
+	    ntf_vibration(200);
+#endif
             aw8697->rtp_is_playing = 1;
             queue_work(system_highpri_wq, &aw8697->rtp_work);
         }
@@ -3880,6 +3943,9 @@ static ssize_t aw8697_rtp_store(struct device *dev, struct device_attribute *att
 
     return count;
 }
+
+
+
 
 static ssize_t aw8697_ram_update_show(struct device *dev, struct device_attribute *attr,
         char *buf)
@@ -6041,6 +6107,10 @@ static int aw8697_i2c_probe(struct i2c_client *i2c, const struct i2c_device_id *
     pr_info("%s probe completed successfully!\n", __func__);
 #ifdef CONFIG_UCI
     __aw8697 = aw8697;
+#endif
+#ifdef CONFIG_UCI_NOTIFICATIONS
+    uci_add_user_listener(uci_user_listener);
+    uci_add_sys_listener(uci_sys_listener);
 #endif
     return 0;
 
