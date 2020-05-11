@@ -105,7 +105,7 @@ EXPORT_SYMBOL(is_magisk);
 
 int uci_kadaway = 0;
 static void uci_user_listener(void) {
-	uci_kadaway = uci_get_user_property_int_mm("kadaway", 0, 0, 0);
+	uci_kadaway = uci_get_user_property_int_mm("kadaway", 0, 0, 1);
 	pr_info("%s uci_kadaway %d\n",__func__,uci_kadaway);
 }
 bool is_kadaway(void) {
