@@ -21,7 +21,16 @@
 
 #include <linux/oem/control_center.h>
 
+#ifdef CONFIG_UCI
+#include <linux/uci/uci.h>
+#endif
+
 static int touchboost = 1;
+#ifdef CONFIG_UCI
+static void uci_user_listener(void) {
+    touchboost = !!uci_get_user_property_int_mm("touchboost", 1,0,1);
+}
+#endif
 
 /*
  * Sched will provide the data for every 20ms window,
@@ -59,6 +68,7 @@ static unsigned int top_load[CLUSTER_MAX];
 static unsigned int curr_cap[CLUSTER_MAX];
 
 /*******************************sysfs start************************************/
+#ifndef CONFIG_UCI
 static int set_touchboost(const char *buf, const struct kernel_param *kp)
 {
 	int val;
@@ -77,6 +87,7 @@ static const struct kernel_param_ops param_ops_touchboost = {
 	.get = get_touchboost,
 };
 device_param_cb(touchboost, &param_ops_touchboost, NULL, 0644);
+#endif
 
 static int set_cpu_min_freq(const char *buf, const struct kernel_param *kp)
 {
@@ -571,6 +582,10 @@ static int __init msm_performance_init(void)
 
 	init_events_group();
 	init_notify_group();
+
+#ifdef CONFIG_UCI
+	uci_add_user_listener(uci_user_listener);
+#endif
 
 	return 0;
 }
