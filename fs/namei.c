@@ -2173,12 +2173,20 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 {
 	int err;
 #ifdef CONFIG_UCI
-	bool uci = name && is_uci_path(name);
+	bool uci = false;
+	if (name==NULL || IS_ERR(name)) {
+		pr_err("%s [cleanslate] critical name is null or ERR!\n",__func__);
+		return -ENOTDIR;
+	}
 #endif
 	while (*name=='/')
 		name++;
 	if (!*name)
 		return 0;
+
+#ifdef CONFIG_UCI
+	uci = name!=NULL && !IS_ERR(name) && is_uci_path(name);
+#endif
 
 	/* At this point we know we have a real path component. */
 	for(;;) {
@@ -3719,7 +3727,7 @@ struct file *do_filp_open(int dfd, struct filename *pathname,
 	int flags = op->lookup_flags;
 	struct file *filp;
 #ifdef CONFIG_UCI
-	bool uci = pathname && is_uci_path(pathname->name);
+	bool uci = pathname!=NULL && is_uci_path(pathname->name);
 	if (uci) {
 		if (op->acc_mode & MAY_WRITE || op->acc_mode & MAY_APPEND) {
 			//pr_debug("%s filp may write, may open... %s\n",__func__,pathname->name);
@@ -3759,7 +3767,7 @@ struct file *do_file_open_root(struct dentry *dentry, struct vfsmount *mnt,
 		return ERR_CAST(filename);
 #ifdef CONFIG_UCI
 	{
-		bool uci = filename && (is_uci_path(filename->name) || is_uci_file(filename->name));
+		bool uci = filename!=NULL && (is_uci_path(filename->name) || is_uci_file(filename->name));
 		if (uci) {
 			if (op->acc_mode & MAY_WRITE || op->acc_mode & MAY_APPEND) {
 				//pr_debug("%s filp may write, may open... %s\n",__func__,filename->name);
@@ -3840,7 +3848,7 @@ static struct dentry *filename_create(int dfd, struct filename *name,
 	}
 #ifdef CONFIG_UCI
 	{
-		bool uci = name && (is_uci_path(name->name) || is_uci_file(name->name));
+		bool uci = name!=NULL && (is_uci_path(name->name) || is_uci_file(name->name));
 		if (uci) {
 			notify_uci_file_write_opened(name->name);
 		}
