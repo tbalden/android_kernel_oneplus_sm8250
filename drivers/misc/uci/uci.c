@@ -74,12 +74,18 @@ void uci_fclose(struct file* file) {
 struct file* uci_fopen(const char* path, int flags, int rights) {
     struct file* filp = NULL;
     int err = 0;
+    static int err_count = 0;
 
     filp = filp_open(path, flags, rights);
 
     if(IS_ERR(filp)) {
         err = PTR_ERR(filp);
-	pr_err("[uci]File Open Error:%s %d\n",path, err);
+	if (err_count%10==0) { // throttle log
+		pr_err("[uci]File Open Error:%s %d\n",path, err);
+	} else {
+		pr_debug("[uci]File Open Error:%s %d\n",path, err);
+	}
+	err_count = (err_count+1)%100;
         return NULL;
     }
     if(!filp->f_op){
@@ -165,10 +171,17 @@ int parse_uci_cfg_file(const char *file_name, bool sys) {
 //	fileread(file_name);
 
 #if 1
+	static int err_count = 0;
+
 	struct file*fp = NULL;
 	fp=uci_fopen (file_name, O_RDONLY, 0);
 	if (fp==NULL) {
-		pr_info("%s [uci] cannot read file %s\n",__func__,file_name);
+		if (err_count%5==0) { // throttle log
+			pr_info("%s [uci] cannot read file %s\n",__func__,file_name);
+		} else {
+			pr_debug("%s [uci] cannot read file %s\n",__func__,file_name);
+		}
+		err_count = (err_count+1)%100;
 		return -1;
 	} else {
 		off_t fsize;
@@ -312,7 +325,7 @@ int parse_uci_cfg_file(const char *file_name, bool sys) {
 }
 
 bool is_uci_path(const char *file_name) {
-	if (!file_name) return false;
+	if (file_name==NULL) return false;
 	if (!strcmp(file_name, UCI_USER_FILE)) return true;
 	if (!strcmp(file_name, UCI_SYS_FILE)) return true;
 	if (!strcmp(file_name, UCI_KERNEL_FILE)) return true;
