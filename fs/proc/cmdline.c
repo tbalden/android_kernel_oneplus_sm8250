@@ -34,7 +34,7 @@ static int cmdline_proc_show(struct seq_file *m, void *v)
 		done = true;
 	}
 	spin_unlock(&show_lock);
-	pr_info("%s cleanslate cmdline debugging. call number # %d\n",__func__,count++);
+	pr_debug("%s cleanslate cmdline debugging. call number # %d\n",__func__,count++);
 #endif
 	seq_puts(m, new_command_line);
 	seq_putc(m, '\n');
