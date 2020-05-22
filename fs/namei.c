@@ -2178,15 +2178,12 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 		pr_err("%s [cleanslate] critical name is null or ERR!\n",__func__);
 		return -ENOTDIR;
 	}
+	uci = is_uci_path(name);
 #endif
 	while (*name=='/')
 		name++;
 	if (!*name)
 		return 0;
-
-#ifdef CONFIG_UCI
-	uci = name!=NULL && !IS_ERR(name) && is_uci_path(name);
-#endif
 
 	/* At this point we know we have a real path component. */
 	for(;;) {
