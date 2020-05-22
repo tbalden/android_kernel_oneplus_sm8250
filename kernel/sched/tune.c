@@ -14,6 +14,7 @@ bool schedtune_initialized = false;
 extern struct reciprocal_value schedtune_spc_rdiv;
 
 #ifdef CONFIG_DYNAMIC_STUNE_BOOST
+static unsigned long log_boost_effect = 0;
 #define DYNAMIC_BOOST_SLOTS_COUNT 5
 static DEFINE_MUTEX(boost_slot_mutex);
 static DEFINE_MUTEX(stune_boost_mutex);
@@ -374,6 +375,7 @@ schedtune_cpu_update(int cpu, u64 now)
 	boost_max = max(boost_max, 0);
 	bg->boost_max = boost_max;
 	bg->boost_ts = boost_ts;
+
 }
 
 static int
@@ -665,6 +667,22 @@ int schedtune_task_boost(struct task_struct *p)
 	st = task_schedtune(p);
 	task_boost = st->boost;
 	rcu_read_unlock();
+#if 0
+	{
+		static int last_value = -1;
+		static struct schedtune *top_app_st = NULL;
+		char name_buf[NAME_MAX + 1];
+		char *st_name = "top-app";
+		cgroup_name(st->css.cgroup, name_buf, sizeof(name_buf));
+		if ((top_app_st!=NULL && top_app_st == st) || strncmp(name_buf, st_name, strlen(st_name)) == 0) {
+			if (jiffies - log_boost_effect < 10 && task_boost!=last_value) {
+				pr_info("%s [cleanslate] top-app set task boost to %d\n", __func__, task_boost);
+				last_value = task_boost;
+			}
+			top_app_st = st;
+		}
+	}
+#endif
 
 	return task_boost;
 }
@@ -1136,6 +1154,8 @@ static int _do_stune_boost(struct schedtune *st, int boost, int *slot)
 	if (boost > st->boost)
 		ret = dynamic_boost(st, boost);
 	mutex_unlock(&stune_boost_mutex);
+
+	log_boost_effect = jiffies;
 
 	return ret;
 }
