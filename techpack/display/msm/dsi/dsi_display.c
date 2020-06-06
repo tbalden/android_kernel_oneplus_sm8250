@@ -782,6 +782,34 @@ void dsi_rect_intersect(const struct dsi_rect *r1,
 	}
 }
 
+#ifdef CONFIG_UCI
+static int backlight_min = 3;
+static bool backlight_dimmer = false;
+static u32 last_brightness;
+static bool first_brightness_set = false;
+
+static void uci_user_listener(void) {
+        {
+                bool change = false;
+                int on = backlight_dimmer?1:0;
+                int backlight_min_curr = backlight_min;
+
+                backlight_min = uci_get_user_property_int_mm("backlight_min", backlight_min, 2, 128);
+                on = !!uci_get_user_property_int_mm("backlight_dimmer", on, 0, 1);
+
+                if (on != backlight_dimmer || backlight_min_curr != backlight_min) change = true;
+
+                backlight_dimmer = on;
+
+                if (first_brightness_set && change) {
+//                        if (!(bl_g->bl_device->props.state & BL_CORE_FBBLANK)) {
+//                                dsi_backlight_update_status(bl_g->bl_device);
+//                        }
+                }
+        }
+}
+#endif
+
 extern int aod_layer_hide;
 int dsi_display_set_backlight(struct drm_connector *connector,
 		void *display, u32 bl_lvl)
@@ -1024,8 +1052,25 @@ int dsi_display_set_backlight(struct drm_connector *connector,
 	bl_scale_sv = panel->bl_config.bl_scale_sv;
 	bl_temp = (u32)bl_temp * bl_scale_sv / MAX_SV_BL_SCALE_LEVEL;
 
+#ifdef CONFIG_UCI
+	DSI_INFO("bl_scale = %u, bl_scale_sv = %u, bl_lvl = %u\n",
+		bl_scale, bl_scale_sv, (u32)bl_temp);
+	if (backlight_dimmer) {
+		if (backlight_min < 45) {
+			if (bl_temp <= 46) {
+				int ratio = 47 - bl_temp; // 2 >= ratio >= 1
+				if (ratio>2) ratio = 2;
+				bl_temp = bl_temp - ( ((46 - backlight_min) * ratio) / 2 );
+				if (bl_temp < backlight_min) bl_temp = backlight_min;
+				DSI_INFO("[cleanslate] backlight dimmer: backlight_min %d, bl_scale = %u, bl_scale_sv = %u, bl_lvl = %u\n",
+					backlight_min, bl_scale, bl_scale_sv, (u32)bl_temp);
+			}
+		}
+	}
+#else
 	DSI_DEBUG("bl_scale = %u, bl_scale_sv = %u, bl_lvl = %u\n",
 		bl_scale, bl_scale_sv, (u32)bl_temp);
+#endif
 	rc = dsi_display_clk_ctrl(dsi_display->dsi_clk_handle,
 			DSI_CORE_CLK, DSI_CLK_ON);
 	if (rc) {
@@ -12595,6 +12640,9 @@ static int __init dsi_display_register(void)
 	dsi_ctrl_drv_register();
 
 	dsi_display_parse_boot_display_selection();
+#ifdef CONFIG_UCI
+	uci_add_user_listener(uci_user_listener);
+#endif
 
 	return platform_driver_register(&dsi_display_driver);
 }
