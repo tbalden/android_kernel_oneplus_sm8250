@@ -7,7 +7,7 @@
 #include "sde_hw_color_proc_common_v4.h"
 #include "sde_hw_color_proc_v4.h"
 
-#if 1
+#ifdef CONFIG_UCI
 #include <linux/uci/uci.h>
 #endif
 
@@ -202,7 +202,7 @@ void sde_setup_dspp_igcv3(struct sde_hw_dspp *ctx, void *cfg)
 	SDE_REG_WRITE(&ctx->hw, IGC_OPMODE_OFF, IGC_EN);
 }
 
-#if 1
+#ifdef CONFIG_UCI
 static bool override = false;
 static int stored_sat = 0;
 static int stored_val = 0;
@@ -227,7 +227,7 @@ void sde_setup_dspp_pccv4(struct sde_hw_dspp *ctx, void *cfg)
 	struct drm_msm_pcc_coeff *coeffs = NULL;
 	int i = 0;
 	u32 base = 0;
-#if 1
+#ifdef CONFIG_UCI
 	int enable = 0, r=255,g=255,b=255, min = 20;
 	int sat=255, hue=0, cont=255, val = 255;
 	u32 opcode = 0, local_opcode = 0;
@@ -241,7 +241,7 @@ void sde_setup_dspp_pccv4(struct sde_hw_dspp *ctx, void *cfg)
 		DRM_ERROR("invalid param ctx %pK cfg %pK\n", ctx, cfg);
 		return;
 	}
-#if 1
+#ifdef CONFIG_UCI
 	//pr_info("%s [CLEANSLATE] kcal setup... \n",__func__);
         enable = uci_get_user_property_int_mm("kcal_enable", enable, 0, 1);
         r = uci_get_user_property_int_mm("kcal_red", r, 0, 256);
@@ -325,7 +325,7 @@ void sde_setup_dspp_pccv4(struct sde_hw_dspp *ctx, void *cfg)
 		SDE_REG_WRITE(&ctx->hw, base + PCC_C_OFF, coeffs->c);
 // ====
 // RED
-#if 1
+#ifdef CONFIG_UCI
 		if (enable && i==0) {
 			SDE_REG_WRITE(&ctx->hw, base + PCC_R_OFF, (coeffs->r * r)/256);
 			//pr_info("%s [CLEANSLATE] kcal r = %d\n",__func__,(coeffs->r * r)/256);
@@ -333,7 +333,7 @@ void sde_setup_dspp_pccv4(struct sde_hw_dspp *ctx, void *cfg)
 #endif
 		SDE_REG_WRITE(&ctx->hw, base + PCC_R_OFF, coeffs->r);
 // GREEN
-#if 1
+#ifdef CONFIG_UCI
 		if (enable && i==1) {
 			SDE_REG_WRITE(&ctx->hw, base + PCC_G_OFF, (coeffs->g * g)/256);
 			//pr_info("%s [CLEANSLATE] kcal g = %d\n",__func__,(coeffs->g * g)/256);
@@ -341,7 +341,7 @@ void sde_setup_dspp_pccv4(struct sde_hw_dspp *ctx, void *cfg)
 #endif
 		SDE_REG_WRITE(&ctx->hw, base + PCC_G_OFF, coeffs->g);
 // BLUE
-#if 1
+#ifdef CONFIG_UCI
 		if (enable && i==2) {
 			SDE_REG_WRITE(&ctx->hw, base + PCC_B_OFF, (coeffs->b * b)/256);
 			//pr_info("%s [CLEANSLATE] kcal b = %d\n",__func__,(coeffs->b * b)/256);
@@ -360,7 +360,7 @@ void sde_setup_dspp_pccv4(struct sde_hw_dspp *ctx, void *cfg)
 #endif
 	}
 
-#if 1
+#ifdef CONFIG_UCI
 
 	opcode = SDE_REG_READ(&ctx->hw, ctx->cap->sblk->hsic.base);
 
@@ -512,7 +512,7 @@ void sde_ltm_read_intr_status(struct sde_hw_dspp *ctx, u32 *status)
 	SDE_REG_WRITE(&ctx->hw, ctx->cap->sblk->ltm.base + 0x58, clear);
 }
 
-#if 1
+#ifdef CONFIG_UCI
 
 //#define KCAL_RGB
 
