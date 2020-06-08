@@ -1355,10 +1355,6 @@
 		ranges = <0x0 0x146bf000 0x1000>;
 		#address-cells = <1>;
 		#size-cells = <1>;
-		download_mode@0 {
-			compatible = "qcom,msm-imem-download_mode";
-			reg = <0x658 0x4>;
-		};
 
 		download_mode@0 {
 			compatible = "qcom,msm-imem-download_mode";
