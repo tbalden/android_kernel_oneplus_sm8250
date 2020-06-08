@@ -1036,18 +1036,18 @@ int dsi_display_set_backlight(struct drm_connector *connector,
 #ifdef CONFIG_UCI
 	DSI_INFO("bl_scale = %u, bl_scale_sv = %u, bl_lvl = %u\n",
 		bl_scale, bl_scale_sv, (u32)bl_temp);
-	if (primary_display!=NULL && display == primary_display) {
-		if (backlight_dimmer) {
-		if (backlight_min < 45) {
-			if (bl_temp <= 46) {
+	if (primary_display!=NULL && display == primary_display && bl_temp > 0) {
+		if (backlight_dimmer && backlight_min < 45 && bl_temp<=46) {
+			if (bl_temp < 45) {
+				bl_temp = backlight_min;
+			} else {
 				int ratio = 47 - bl_temp; // 2 >= ratio >= 1
 				if (ratio>2) ratio = 2;
 				bl_temp = bl_temp - ( ((46 - backlight_min) * ratio) / 2 );
 				if (bl_temp < backlight_min) bl_temp = backlight_min;
-				DSI_INFO("[cleanslate] backlight dimmer: backlight_min %d, bl_scale = %u, bl_scale_sv = %u, bl_lvl = %u\n",
-					backlight_min, bl_scale, bl_scale_sv, (u32)bl_temp);
 			}
-		}
+			DSI_INFO("[cleanslate] backlight dimmer: backlight_min %d, bl_scale = %u, bl_scale_sv = %u, bl_lvl = %u\n",
+				backlight_min, bl_scale, bl_scale_sv, (u32)bl_temp);
 		}
 		last_brightness = bl_lvl;
 		first_brightness_set = true;
