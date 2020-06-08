@@ -1042,8 +1042,12 @@ int dsi_display_set_backlight(struct drm_connector *connector,
 				bl_temp = backlight_min;
 			} else {
 				int ratio = 47 - bl_temp; // 2 >= ratio >= 1
+				int substraction = 0;
 				if (ratio>2) ratio = 2;
-				bl_temp = bl_temp - ( ((46 - backlight_min) * ratio) / 2 );
+				substraction = ((46 - backlight_min) * ratio) / 2;
+				if (substraction < bl_temp) {
+					bl_temp = bl_temp - substraction;
+				}
 				if (bl_temp < backlight_min) bl_temp = backlight_min;
 			}
 			DSI_INFO("[cleanslate] backlight dimmer: backlight_min %d, bl_scale = %u, bl_scale_sv = %u, bl_lvl = %u\n",
