@@ -782,6 +782,15 @@ void dsi_rect_intersect(const struct dsi_rect *r1,
 	}
 }
 
+#ifdef CONFIG_UCI
+static bool screen_is_on = false;
+static int backlight_min = 6;
+static bool backlight_dimmer = false;
+static u32 last_brightness;
+static bool first_brightness_set = false;
+struct drm_connector *primary_connector = NULL;
+#endif
+
 extern int aod_layer_hide;
 int dsi_display_set_backlight(struct drm_connector *connector,
 		void *display, u32 bl_lvl)
@@ -1024,8 +1033,33 @@ int dsi_display_set_backlight(struct drm_connector *connector,
 	bl_scale_sv = panel->bl_config.bl_scale_sv;
 	bl_temp = (u32)bl_temp * bl_scale_sv / MAX_SV_BL_SCALE_LEVEL;
 
+#ifdef CONFIG_UCI
+	DSI_INFO("bl_scale = %u, bl_scale_sv = %u, bl_lvl = %u\n",
+		bl_scale, bl_scale_sv, (u32)bl_temp);
+	if (primary_display!=NULL && display == primary_display && bl_temp > 0) {
+		if (backlight_dimmer && backlight_min < 45 && bl_temp<=46) {
+			if (bl_temp < 45) {
+				bl_temp = backlight_min;
+			} else {
+				int ratio = 47 - bl_temp; // 2 >= ratio >= 1
+				int substraction = 0;
+				if (ratio>2) ratio = 2;
+				substraction = ((46 - backlight_min) * ratio) / 2;
+				if (substraction < bl_temp) {
+					bl_temp = bl_temp - substraction;
+				}
+				if (bl_temp < backlight_min) bl_temp = backlight_min;
+			}
+			DSI_INFO("[cleanslate] backlight dimmer: backlight_min %d, bl_scale = %u, bl_scale_sv = %u, bl_lvl = %u\n",
+				backlight_min, bl_scale, bl_scale_sv, (u32)bl_temp);
+		}
+		last_brightness = bl_lvl;
+		first_brightness_set = true;
+	}
+#else
 	DSI_DEBUG("bl_scale = %u, bl_scale_sv = %u, bl_lvl = %u\n",
 		bl_scale, bl_scale_sv, (u32)bl_temp);
+#endif
 	rc = dsi_display_clk_ctrl(dsi_display->dsi_clk_handle,
 			DSI_CORE_CLK, DSI_CLK_ON);
 	if (rc) {
@@ -1069,6 +1103,29 @@ error:
 
 	return rc;
 }
+
+#ifdef CONFIG_UCI
+static void uci_user_listener(void) {
+        {
+                bool change = false;
+                int on = backlight_dimmer?1:0;
+                int backlight_min_curr = backlight_min;
+
+                backlight_min = uci_get_user_property_int_mm("backlight_min", backlight_min, 3, 45);
+                on = !!uci_get_user_property_int_mm("backlight_dimmer", on, 0, 1);
+
+                if (on != backlight_dimmer || backlight_min_curr != backlight_min) change = true;
+
+                backlight_dimmer = on;
+
+                if (first_brightness_set && change) {
+			if (primary_display != NULL && primary_connector != NULL && screen_is_on) {
+				dsi_display_set_backlight(primary_connector,primary_display, last_brightness);
+			}
+                }
+        }
+}
+#endif
 
 int dsi_display_cmd_engine_enable(struct dsi_display *display)
 {
@@ -2542,7 +2599,6 @@ static void _dsi_display_setup_misr(struct dsi_display *display)
 }
 
 extern int dsi_panel_set_aod_mode(struct dsi_panel *panel, int level);
-
 int dsi_display_set_power(struct drm_connector *connector,
 		int power_mode, void *disp)
 {
@@ -2564,9 +2620,11 @@ int dsi_display_set_power(struct drm_connector *connector,
 #ifdef CONFIG_UCI_NOTIFICATIONS_SCREEN_CALLBACKS
 	if (power_mode==SDE_MODE_DPMS_LP1 || power_mode==SDE_MODE_DPMS_OFF) { // 5 - fully off / 1 - AOD
 		ntf_screen_off();
+		screen_is_on = false;
 	} else if (power_mode==SDE_MODE_DPMS_ON) { // && bd->props.state!=2) { // 0 ON (state!= 0x02 it's a transient state while getting out of pocket, ON's 'state'
 				    // Without AOD props state can be 2 as well. Check user inputs instead
 		ntf_screen_on();
+		screen_is_on = true;
 	}
 #endif
 
@@ -9113,6 +9171,13 @@ wait_failure:
 		mutex_unlock(&display->display_lock);
 	}
 
+#ifdef CONFIG_UCI
+	if (primary_display!=NULL && primary_connector == NULL) {
+		if (primary_display == display) {
+			primary_connector = connector;
+		}
+	}
+#endif
 	SDE_ATRACE_END("dsi_display_pre_kickoff");
 	return rc;
 }
@@ -12796,6 +12861,9 @@ static int __init dsi_display_register(void)
 	dsi_ctrl_drv_register();
 
 	dsi_display_parse_boot_display_selection();
+#ifdef CONFIG_UCI
+	uci_add_user_listener(uci_user_listener);
+#endif
 
 	return platform_driver_register(&dsi_display_driver);
 }

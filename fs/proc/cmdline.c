@@ -7,9 +7,10 @@
 
 #if 1
 #include <linux/slab.h>
+
+#ifdef CONFIG_UCI
 #include <linux/spinlock.h>
 
-#if 1
 static bool done = false;
 static DEFINE_SPINLOCK(show_lock);
 static bool magisk = true;
@@ -25,7 +26,7 @@ static char new_command_line[COMMAND_LINE_SIZE];
 
 static int cmdline_proc_show(struct seq_file *m, void *v)
 {
-#if 1
+#ifdef CONFIG_UCI
 	static int count = 0;
 	spin_lock(&show_lock);
 	if (done) {
@@ -111,7 +112,7 @@ static void replace_safetynet_flags(char *cmd)
 
 static int __init proc_cmdline_init(void)
 {
-#if 1
+#ifdef CONFIG_UCI
 	init_custom_fs();
 #endif
 	strcpy(new_command_line, saved_command_line);

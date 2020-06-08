@@ -3,7 +3,7 @@
 #
 menu "UCI Notifications Module"
 config UCI_NOTIFICATIONS
-       default y
+       default n
        tristate "UCI notifications module"
 
 config UCI_NOTIFICATIONS_SCREEN_CALLBACKS
