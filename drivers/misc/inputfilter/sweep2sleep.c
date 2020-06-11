@@ -173,7 +173,30 @@ static void s2s_setup_values() {
 	}
 }
 
+//#define HZ_300
+#define HZ_250
+#define CONFIG_DEBUG_S2S
 
+#ifdef HZ_300
+#define TIME_DIFF 15
+#define LAST_TAP_TIME_DIFF_DOUBLETAP_MAX 150
+#define LAST_TAP_TIME_DIFF_VIBRATE 50
+#endif
+
+#ifdef HZ_250
+#define TIME_DIFF 13
+#define LAST_TAP_TIME_DIFF_DOUBLETAP_MAX 125
+#define LAST_TAP_TIME_DIFF_VIBRATE 42
+#endif
+
+static int get_s2s_longtap_min_holdtime(void) {
+
+#ifdef HZ_250
+	return (s2s_longtap_min_holdtime * 250 / 300);
+#elif
+	return s2s_longtap_min_holdtime;
+#endif
+}
 
 static int finger_counter = 0;
 static bool pause_before_pwr_off = false;
@@ -297,7 +320,7 @@ static void sweep2sleep_longtap_count(struct work_struct * sweep2sleep_longtap_c
 			}
 		}
 		// first touch time is past enough (100)
-		if (last_tap_time_diff > s2s_longtap_min_holdtime) {
+		if (last_tap_time_diff > get_s2s_longtap_min_holdtime()) {
 			reset_doubletap_tracking();
 			reset_longtap_tracking();
 			if (get_s2s_doubletap_mode()==1) { // power button mode - long tap -> notif down
@@ -378,7 +401,7 @@ static void detect_sweep2sleep(int x, int y, bool st)
 				if (exec_count) {
 					unsigned int last_vib_diff = jiffies - last_scheduled_vib_time;
 					if (barrier[1] == true) { vib_power = 50; } else { vib_power = get_s2s_continuous_vib()?1:60; }
-					if (last_vib_diff > 15) {
+					if (last_vib_diff > TIME_DIFF) {
 						schedule_work(&sweep2sleep_vib_work);
 						last_scheduled_vib_time = jiffies;
 					}
@@ -425,7 +448,7 @@ static void detect_sweep2sleep(int x, int y, bool st)
 				if (exec_count) {
 					unsigned int last_vib_diff = jiffies - last_scheduled_vib_time;
 					if (barrier[1] == true) { vib_power = 50; } else { vib_power = get_s2s_continuous_vib()?1:60; }
-					if (last_vib_diff > 15) {
+					if (last_vib_diff > TIME_DIFF) {
 						schedule_work(&sweep2sleep_vib_work);
 						last_scheduled_vib_time = jiffies;
 					}
@@ -507,7 +530,7 @@ bool s2s_freeze_coords(int *x, int *y, int r_x, int r_y) {
 #ifdef CONFIG_DEBUG_S2S
 		pr_info("%s touch x/y gathered.\n",__func__);
 #endif
-		if (get_s2s_switch() && get_s2s_filter_mode() && !filter_coords_status && !finger_counter && time_diff>15) {
+		if (get_s2s_switch() && get_s2s_filter_mode() && !filter_coords_status && !finger_counter && time_diff>TIME_DIFF) {
 			if (
 			// if ... first touch was not registered (filter_coords_status = false) && register only in corner area, and X is outside cordner area,
 			(!get_s2s_from_corner() || (get_s2s_from_corner() && (r_x > S2S_X_MAX - get_s2s_corner_width() || r_x < get_s2s_corner_width()))) &&
@@ -616,13 +639,13 @@ static bool __s2s_input_filter(struct input_handle *handle, unsigned int type,
 		if (last_tap_starts_in_dt_area) {
 			int delta_x = last_tap_coord_x - touch_x;
 			int delta_y = last_tap_coord_y - touch_y;
+			unsigned int last_tap_time_diff = jiffies - last_tap_jiffies;
 #ifdef CONFIG_DEBUG_S2S
 			pr_info("%s doubletap check at btn leave, Time: %u X: %d Y: %d\n",__func__,last_tap_time_diff,delta_x,delta_y);
 #endif
 			if (delta_x < 20 && delta_x > -20 && delta_y < 20 && delta_y > -20) {
-				unsigned int last_tap_time_diff = jiffies - last_tap_jiffies;
 				// first touch time is very close and didn't move more than 20px before leaving screen... finishing that touch within the area? vibrate...
-				if (last_tap_time_diff < 50) { 
+				if (last_tap_time_diff < LAST_TAP_TIME_DIFF_VIBRATE) {
 					if (!get_s2s_longtap_switch()) { // if not in longtap mode, then vibrate here (otherwise first touch already vibrates in other part of driver)
 						vib_power = 60;
 						schedule_work(&sweep2sleep_vib_work);
@@ -728,7 +751,7 @@ static bool __s2s_input_filter(struct input_handle *handle, unsigned int type,
 #ifdef CONFIG_DEBUG_S2S
 					pr_info("%d doubletap check, Time: %u X: %d Y: %d\n",last_tap_time_diff,delta_x,delta_y);
 #endif
-					if (last_tap_time_diff < 150) { // previous first touch time and coordinate comparision to detect double tap...
+					if (last_tap_time_diff < LAST_TAP_TIME_DIFF_DOUBLETAP_MAX) { // previous first touch time and coordinate comparision to detect double tap...
 						if (delta_x < 60 && delta_x > -60 && delta_y < 60 && delta_y > -60) {
 							touch_down_called = false;
 							sweep2sleep_reset(false); // do not let coordinate freezing yet off, finger is on screen and gesture is still on => (false)
