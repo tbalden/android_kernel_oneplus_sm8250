@@ -269,7 +269,7 @@ static void tp_touch_down(struct touchpanel_data *ts, struct point_info points, 
 			if(!CHK_BIT(ts->irq_slot, (1<<id)))
 				TPD_DETAIL("first touch point id %d [%4d %4d %4d]\n", id, points.x, points.y, points.z);
 		}
-#ifdef CONFIG_UCI__
+#ifdef CONFIG_UCI
 	{
 	int x2, y2;
 	int x = points.x;
@@ -625,17 +625,6 @@ static void tp_touch_handle(struct touchpanel_data *ts)
 			if (((obj_attention & TOUCH_BIT_CHECK) >> i) & 0x01 && (points[i].status == 0)) // buf[0] == 0 is wrong point, no process
 				continue;
 			if (((obj_attention & TOUCH_BIT_CHECK) >> i) & 0x01 && (points[i].status != 0)) {
-#ifdef CONFIG_UCI
-				{
-					int x2, y2;
-					int x = points[i].x;
-					int y = points[i].y;
-					bool frozen_coords = s2s_freeze_coords(&x2,&y2,x,y);
-					if (frozen_coords) { points[i].x = x2; points[i].y = y2; }
-//					input_report_abs(ts->input_dev, ABS_MT_POSITION_X, x);
-//					input_report_abs(ts->input_dev, ABS_MT_POSITION_Y, y);
-				}
-#endif
 				//Edge process before report abs
 				if (ts->edge_limit_support) {
 					if (ts->corner_delay_up < 1 && corner_point_process(ts, corner, points, i))
