@@ -26,7 +26,7 @@
 #include "sde_crtc.h"
 #include "sde_rm.h"
 #include "sde_trace.h"
-#if defined(CONFIG_PXLW_IRIS5)
+#if defined(CONFIG_PXLW_IRIS5) || defined(CONFIG_PXLW_SOFT_IRIS)
 #include "dsi_iris5_api.h"
 #endif
 #include <linux/pm_wakeup.h>
@@ -94,7 +94,11 @@ static char dsi_dsc_rc_range_max_qp_1_1[][15] = {
 	{4, 4, 5, 6, 7, 7, 7, 8, 9, 10, 11, 12, 13, 13, 15},
 	{4, 8, 9, 10, 11, 11, 11, 12, 13, 14, 15, 16, 17, 17, 19},
 	{12, 12, 13, 14, 15, 15, 15, 16, 17, 18, 19, 20, 21, 21, 23},
+#if defined(CONFIG_PXLW_IRIS5)
+	{8, 8, 9, 10, 11, 11, 11, 12, 13, 13, 14, 14, 15, 15, 16},
+#else
 	{7, 8, 9, 10, 11, 11, 11, 12, 13, 13, 14, 14, 15, 15, 16},
+#endif
 	};
 
 /*
@@ -121,6 +125,9 @@ static int    cur_backlight = -1;
 static int    cur_fps = 60;
 static int    cur_h = 1440;
 static struct dsi_panel_cmd_set gamma_cmd_set[2];
+
+char dimming_gamma_60hz[30] = {0};
+char dimming_gamma_120hz[15] = {0};
 
 char gamma_para[2][413] = {
 {
@@ -586,6 +593,12 @@ static int dsi_panel_reset(struct dsi_panel *panel)
 	int i;
 
 #if defined(CONFIG_PXLW_IRIS5)
+#if defined(PXLW_IRIS_DUAL)
+	if (panel->is_secondary) {
+		DSI_WARN("no need dsi_panel_reset in secondary panel\n");
+		return rc;
+	}
+#endif
 	iris5_reset(panel);
 #endif
 
@@ -802,6 +815,7 @@ static int dsi_panel_power_off(struct dsi_panel *panel)
 	return rc;
 }
 
+EXPORT_SYMBOL(dsi_panel_tx_cmd_set);
 int dsi_panel_tx_cmd_set(struct dsi_panel *panel,
 				enum dsi_cmd_set_type type)
 {
@@ -2205,12 +2219,14 @@ const char *cmd_set_prop_map[DSI_CMD_SET_MAX] = {
 	"qcom,mdss-dsi-panel-gamma-flash-pre-read-2-command",
 	"qcom,mdss-dsi-panel-gamma-flash-read-fb-command",
 	"qcom,mdss-dsi-panel-level2-key-enable-command",
+	"qcom,mdss-dsi-panel-gamma-otp-read-c7-command",
 	"qcom,mdss-dsi-panel-gamma-otp-read-c8-smrps-command",
 	"qcom,mdss-dsi-panel-gamma-otp-read-c8-command",
 	"qcom,mdss-dsi-panel-gamma-otp-read-c9-smrps-command",
 	"qcom,mdss-dsi-panel-gamma-otp-read-c9-command",
 	"qcom,mdss-dsi-panel-gamma-otp-read-b3-smrps-command",
 	"qcom,mdss-dsi-panel-gamma-otp-read-b3-command",
+	"qcom,mdss-dsi-panel-gamma-change-write-command",
 	"qcom,mdss-dsi-panel-level2-key-disable-command",
 	"qcom,mdss-dsi-panel-display-p3-mode-on-command",
 	"qcom,mdss-dsi-panel-display-p3-mode-off-command",
@@ -2309,12 +2325,14 @@ const char *cmd_set_state_map[DSI_CMD_SET_MAX] = {
 	"qcom,mdss-dsi-panel-gamma-flash-pre-read-2-command-state",
 	"qcom,mdss-dsi-panel-gamma-flash-read-fb-command-state",
 	"qcom,mdss-dsi-panel-level2-key-enable-command-state",
+	"qcom,mdss-dsi-panel-gamma-otp-read-c7-command-state",
 	"qcom,mdss-dsi-panel-gamma-otp-read-c8-smrps-command-state",
 	"qcom,mdss-dsi-panel-gamma-otp-read-c8-command-state",
 	"qcom,mdss-dsi-panel-gamma-otp-read-c9-smrps-command-state",
 	"qcom,mdss-dsi-panel-gamma-otp-read-c9-command-state",
 	"qcom,mdss-dsi-panel-gamma-otp-read-b3-smrps-command-state",
 	"qcom,mdss-dsi-panel-gamma-otp-read-b3-command-state",
+	"qcom,mdss-dsi-panel-gamma-change-write-command-state",
 	"qcom,mdss-dsi-panel-level2-key-disable-command-state",
 	"qcom,mdss-dsi-panel-display-p3-mode-on-command-state",
 	"qcom,mdss-dsi-panel-display-p3-mode-off-command-state",
@@ -3015,6 +3033,10 @@ int dsi_dsc_populate_static_param(struct msm_display_dsc_info *dsc)
 
 	if (dsc->version == 0x11 && dsc->scr_rev == 0x1)
 		dsc->first_line_bpg_offset = 15;
+#if defined(CONFIG_PXLW_IRIS5)
+	else if (dsc->bpc == 10 && dsc->bpp == 10)
+		dsc->first_line_bpg_offset = 9;
+#endif
 	else
 		dsc->first_line_bpg_offset = 12;
 
@@ -5127,6 +5149,14 @@ int dsi_panel_switch(struct dsi_panel *panel)
 		return -EINVAL;
 	}
 
+#if defined(PXLW_IRIS_DUAL)
+	if (panel->is_secondary) {
+		DSI_WARN("no need dsi_panel_switch in secondary panel\n");
+		panel->panel_switch_status = false;
+		return rc;
+	}
+#endif
+
 	if (cur_h_active != panel->cur_mode->timing.h_active) {
 		udelay(2000); //Add delay for resolution switch garbage issue
 		cur_h_active = panel->cur_mode->timing.h_active;
@@ -5178,6 +5208,13 @@ int dsi_panel_post_switch(struct dsi_panel *panel)
 		DSI_ERR("Invalid params\n");
 		return -EINVAL;
 	}
+
+#if defined(PXLW_IRIS_DUAL)
+	if (panel->is_secondary) {
+		DSI_WARN("no need dsi_panel_post_switch in secondary panel\n");
+		return rc;
+	}
+#endif
 
 	panel->panel_switch_status = true;
 	mutex_lock(&panel->panel_lock);
@@ -5243,6 +5280,10 @@ int dsi_panel_enable(struct dsi_panel *panel)
 		       panel->name, rc);
 	else
 		panel->panel_initialized = true;
+
+	rc = dsi_panel_dimming_gamma_write(panel);
+	if (rc)
+		DSI_ERR("Failed to write dimming gamma, rc=%d\n", rc);
 
 	if (panel->mca_setting_mode == 0) {
 		rc = dsi_panel_set_mca_setting_mode(panel, panel->mca_setting_mode);
@@ -5372,6 +5413,9 @@ int dsi_panel_disable(struct dsi_panel *panel)
 			dsi_pwr_panel_regulator_mode_set(&panel->power_info,
 				"ibb", REGULATOR_MODE_STANDBY);
 		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_OFF);
+#endif
+#if defined(CONFIG_PXLW_SOFT_IRIS)
+		iris5_lightoff(panel, NULL);
 #endif
 		if (rc) {
 			/*
@@ -6257,6 +6301,532 @@ int dsi_panel_tx_gamma_cmd_set(struct dsi_panel *panel,
 		cmds++;
 	}
 error:
+	return rc;
+}
+
+void dsi_panel_update_gamma_change_write(void)
+{
+	int i = 0;
+	int r_4 = 0;
+	int g_4 = 0;
+	int b_4 = 0;
+	int r_3 = 0;
+	int g_3 = 0;
+	int b_3 = 0;
+	int r_2 = 0;
+	int g_2 = 0;
+	int b_2 = 0;
+	int r_1 = 0;
+	int g_1 = 0;
+	int b_1 = 0;
+	int option = 3;
+
+	if (option == 1) {
+		r_4 = ((dimming_gamma_120hz[4] & 0xC0) << 2) | dimming_gamma_120hz[0];
+		if (r_4 < 0) {
+			r_4 = 0;
+			DSI_ERR("120hz: r_4 = 0");
+		}
+		g_4 = ((dimming_gamma_120hz[4] & 0x30) << 4) | dimming_gamma_120hz[1];
+		if (g_4 < 0) {
+			g_4 = 0;
+			DSI_ERR("120hz: g_4 = 0");
+		}
+		b_4 = ((dimming_gamma_120hz[4] & 0x0C) << 6) | dimming_gamma_120hz[2];
+		if (b_4 < 0) {
+			b_4 = 0;
+			DSI_ERR("120hz: b_4 = 0");
+		}
+		r_3 = r_4 - 64;
+		if (r_3 < 0) {
+			r_3 = 0;
+			DSI_ERR("120hz: r_3 = 0");
+		}
+		g_3 = g_4 - 16;
+		if (g_3 < 0) {
+			g_3 = 0;
+			DSI_ERR("120hz: g_3 = 0");
+		}
+		b_3 = b_4 - 32;
+		if (b_3 < 0) {
+			b_3 = 0;
+			DSI_ERR("120hz: b_3 = 0");
+		}
+		r_2 = r_4 - 116;
+		if (r_2 < 0) {
+			r_2 = 0;
+			DSI_ERR("120hz: r_2 = 0");
+		}
+		g_2 = g_4 - 29;
+		if (g_2 < 0) {
+			g_2 = 0;
+			DSI_ERR("120hz: g_2 = 0");
+		}
+		b_2 = b_4 - 58;
+		if (b_2 < 0) {
+			b_2 = 0;
+			DSI_ERR("120hz: b_2 = 0");
+		}
+		dimming_gamma_120hz[3] = r_3 & 0xFF;
+		dimming_gamma_120hz[4] = (dimming_gamma_120hz[4] & 0xFC) | ((r_3 & 0x0300) >> 8);
+		dimming_gamma_120hz[5] = g_3 & 0xFF;
+		dimming_gamma_120hz[6] = b_3 & 0xFF;
+		dimming_gamma_120hz[7] = r_2 & 0xFF;
+		dimming_gamma_120hz[8] = g_2 & 0xFF;
+		dimming_gamma_120hz[9] = ((g_3 & 0x0300) >> 2) | ((b_3 & 0x0300) >> 4) | ((r_2 & 0x0300) >> 6) | ((g_2 & 0x0300) >> 8);
+		dimming_gamma_120hz[10] = b_2 & 0xFF;
+		dimming_gamma_120hz[14] = (dimming_gamma_120hz[14] & 0x3F) | ((b_2 & 0x0300) >> 2);
+
+		r_4 = ((dimming_gamma_60hz[4] & 0xC0) << 2) | dimming_gamma_60hz[0];
+		if (r_4 < 0) {
+			r_4 = 0;
+			DSI_ERR("60hz: r_4 = 0");
+		}
+		g_4 = ((dimming_gamma_60hz[4] & 0x30) << 4) | dimming_gamma_60hz[1];
+		if (g_4 < 0) {
+			g_4 = 0;
+			DSI_ERR("60hz: g_4 = 0");
+		}
+		b_4 = ((dimming_gamma_60hz[4] & 0x0C) << 6)| dimming_gamma_60hz[2];
+		if (b_4 < 0) {
+			b_4 = 0;
+			DSI_ERR("60hz: b_4 = 0");
+		}
+		r_3 = r_4 - 70;
+		if (r_3 < 0) {
+			r_3 = 0;
+			DSI_ERR("60hz: r_3 = 0");
+		}
+		g_3 = g_4 - 36;
+		if (g_3 < 0) {
+			g_3 = 0;
+			DSI_ERR("60hz: g_3 = 0");
+		}
+		b_3 = b_4 - 30;
+		if (b_3 < 0) {
+			b_3 = 0;
+			DSI_ERR("60hz: b_3 = 0");
+		}
+		r_2 = r_4 - 126;
+		if (r_2 < 0) {
+			r_2 = 0;
+			DSI_ERR("60hz: r_2 = 0");
+		}
+		g_2 = g_4 - 65;
+		if (g_2 < 0) {
+			g_2 = 0;
+			DSI_ERR("60hz: g_2 = 0");
+		}
+		b_2 = b_4 - 54;
+		if (b_2 < 0) {
+			b_2 = 0;
+			DSI_ERR("60hz: b_2 = 0");
+		}
+		dimming_gamma_60hz[3] = r_3 & 0xFF;
+		dimming_gamma_60hz[4] = (dimming_gamma_60hz[4] & 0xFC) | ((r_3 & 0x0300) >> 8);
+		dimming_gamma_60hz[5] = g_3 & 0xFF;
+		dimming_gamma_60hz[6] = b_3 & 0xFF;
+		dimming_gamma_60hz[7] = r_2 & 0xFF;
+		dimming_gamma_60hz[8] = g_2 & 0xFF;
+		dimming_gamma_60hz[9] = ((g_3 & 0x0300) >> 2) | ((b_3 & 0x0300) >> 4) | ((r_2 & 0x0300) >> 6) | ((g_2 & 0x0300) >> 8);
+		dimming_gamma_60hz[10] = b_2 & 0xFF;
+		dimming_gamma_60hz[14] = (dimming_gamma_60hz[14] & 0x3F) | ((b_2 & 0x0300) >> 2);
+	} else if (option == 2) {
+		r_4 = ((dimming_gamma_120hz[4] & 0xC0) << 2) | dimming_gamma_120hz[0];
+		if (r_4 < 0) {
+			r_4 = 0;
+			DSI_ERR("120hz: r_4 = 0");
+		}
+		g_4 = ((dimming_gamma_120hz[4] & 0x30) << 4) | dimming_gamma_120hz[1];
+		if (g_4 < 0) {
+			g_4 = 0;
+			DSI_ERR("120hz: g_4 = 0");
+		}
+		b_4 = ((dimming_gamma_120hz[4] & 0x0C) << 6)| dimming_gamma_120hz[2];
+		if (b_4 < 0) {
+			b_4 = 0;
+			DSI_ERR("120hz: b_4 = 0");
+		}
+		r_3 = r_4 - 96;
+		if (r_3 < 0) {
+			r_3 = 0;
+			DSI_ERR("120hz: r_3 = 0");
+		}
+		g_3 = g_4 - 24;
+		if (g_3 < 0) {
+			g_3 = 0;
+			DSI_ERR("120hz: g_3 = 0");
+		}
+		b_3 = b_4 - 48;
+		if (b_3 < 0) {
+			b_3 = 0;
+			DSI_ERR("120hz: b_3 = 0");
+		}
+		r_2 = r_4 - 173;
+		if (r_2 < 0) {
+			r_2 = 0;
+			DSI_ERR("120hz: r_2 = 0");
+		}
+		g_2 = g_4 - 43;
+		if (g_2 < 0) {
+			g_2 = 0;
+			DSI_ERR("120hz: g_2 = 0");
+		}
+		b_2 = b_4 - 86;
+		if (b_2 < 0) {
+			b_2 = 0;
+			DSI_ERR("120hz: b_2 = 0");
+		}
+		dimming_gamma_120hz[3] = r_3 & 0xFF;
+		dimming_gamma_120hz[4] = (dimming_gamma_120hz[4] & 0xFC) | ((r_3 & 0x0300) >> 8);
+		dimming_gamma_120hz[5] = g_3 & 0xFF;
+		dimming_gamma_120hz[6] = b_3 & 0xFF;
+		dimming_gamma_120hz[7] = r_2 & 0xFF;
+		dimming_gamma_120hz[8] = g_2 & 0xFF;
+		dimming_gamma_120hz[9] = ((g_3 & 0x0300) >> 2) | ((b_3 & 0x0300) >> 4) | ((r_2 & 0x0300) >> 6) | ((g_2 & 0x0300) >> 8);
+		dimming_gamma_120hz[10] = b_2 & 0xFF;
+		dimming_gamma_120hz[14] = (dimming_gamma_120hz[14] & 0x3F) | ((b_2 & 0x0300) >> 2);
+
+		r_4 = ((dimming_gamma_60hz[4] & 0xC0) << 2) | dimming_gamma_60hz[0];
+		if (r_4 < 0) {
+			r_4 = 0;
+			DSI_ERR("60hz: r_4 = 0");
+		}
+		g_4 = ((dimming_gamma_60hz[4] & 0x30) << 4) | dimming_gamma_60hz[1];
+		if (g_4 < 0) {
+			g_4 = 0;
+			DSI_ERR("60hz: g_4 = 0");
+		}
+		b_4 = ((dimming_gamma_60hz[4] & 0x0C) << 6)| dimming_gamma_60hz[2];
+		if (b_4 < 0) {
+			b_4 = 0;
+			DSI_ERR("60hz: b_4 = 0");
+		}
+		r_3 = r_4 - 105;
+		if (r_3 < 0) {
+			r_3 = 0;
+			DSI_ERR("60hz: r_3 = 0");
+		}
+		g_3 = g_4 - 54;
+		if (g_3 < 0) {
+			g_3 = 0;
+			DSI_ERR("60hz: g_3 = 0");
+		}
+		b_3 = b_4 - 45;
+		if (b_3 < 0) {
+			b_3 = 0;
+			DSI_ERR("60hz: b_3 = 0");
+		}
+		r_2 = r_4 - 189;
+		if (r_2 < 0) {
+			r_2 = 0;
+			DSI_ERR("60hz: r_2 = 0");
+		}
+		g_2 = g_4 - 97;
+		if (g_2 < 0) {
+			g_2 = 0;
+			DSI_ERR("60hz: g_2 = 0");
+		}
+		b_2 = b_4 - 81;
+		if (b_2 < 0) {
+			b_2 = 0;
+			DSI_ERR("60hz: b_2 = 0");
+		}
+		dimming_gamma_60hz[3] = r_3 & 0xFF;
+		dimming_gamma_60hz[4] = (dimming_gamma_60hz[4] & 0xFC) | ((r_3 & 0x0300) >> 8);
+		dimming_gamma_60hz[5] = g_3 & 0xFF;
+		dimming_gamma_60hz[6] = b_3 & 0xFF;
+		dimming_gamma_60hz[7] = r_2 & 0xFF;
+		dimming_gamma_60hz[8] = g_2 & 0xFF;
+		dimming_gamma_60hz[9] = ((g_3 & 0x0300) >> 2) | ((b_3 & 0x0300) >> 4) | ((r_2 & 0x0300) >> 6) | ((g_2 & 0x0300) >> 8);
+		dimming_gamma_60hz[10] = b_2 & 0xFF;
+		dimming_gamma_60hz[14] = (dimming_gamma_60hz[14] & 0x3F) | ((b_2 & 0x0300) >> 2);
+	} else {
+		r_4 = ((dimming_gamma_120hz[4] & 0xC0) << 2) | dimming_gamma_120hz[0];
+		if (r_4 < 0) {
+			r_4 = 0;
+			DSI_ERR("2nit 120hz: r_4 = 0");
+		}
+		g_4 = ((dimming_gamma_120hz[4] & 0x30) << 4) | dimming_gamma_120hz[1];
+		if (g_4 < 0) {
+			g_4 = 0;
+			DSI_ERR("2nit 120hz: g_4 = 0");
+		}
+		b_4 = ((dimming_gamma_120hz[4] & 0x0C) << 6) | dimming_gamma_120hz[2];
+		if (b_4 < 0) {
+			b_4 = 0;
+			DSI_ERR("2nit 120hz: b_4 = 0");
+		}
+		r_3 = r_4 - 48;
+		if (r_3 < 0) {
+			r_3 = 0;
+			DSI_ERR("2nit 120hz: r_3 = 0");
+		}
+		g_3 = g_4 - 12;
+		if (g_3 < 0) {
+			g_3 = 0;
+			DSI_ERR("2nit 120hz: g_3 = 0");
+		}
+		b_3 = b_4 - 24;
+		if (b_3 < 0) {
+			b_3 = 0;
+			DSI_ERR("2nit 120hz: b_3 = 0");
+		}
+		r_2 = r_4 - 79;
+		if (r_2 < 0) {
+			r_2 = 0;
+			DSI_ERR("2nit 120hz: r_2 = 0");
+		}
+		g_2 = g_4 - 20;
+		if (g_2 < 0) {
+			g_2 = 0;
+			DSI_ERR("2nit 120hz: g_2 = 0");
+		}
+		b_2 = b_4 - 40;
+		if (b_2 < 0) {
+			b_2 = 0;
+			DSI_ERR("2nit 120hz: b_2 = 0");
+		}
+		r_1 = r_4 - 126;
+		if (r_1 < 0) {
+			r_1 = 0;
+			DSI_ERR("2nit 120hz: r_1 = 0");
+		}
+		g_1 = g_4 - 32;
+		if (g_1 < 0) {
+			g_1 = 0;
+			DSI_ERR("2nit 120hz: g_1 = 0");
+		}
+		b_1 = b_4 - 63;
+		if (b_1 < 0) {
+			b_1 = 0;
+			DSI_ERR("2nit 120hz: b_1 = 0");
+		}
+		dimming_gamma_120hz[3] = r_3 & 0xFF;
+		dimming_gamma_120hz[4] = (dimming_gamma_120hz[4] & 0xFC) | ((r_3 & 0x0300) >> 8);
+		dimming_gamma_120hz[5] = g_3 & 0xFF;
+		dimming_gamma_120hz[6] = b_3 & 0xFF;
+		dimming_gamma_120hz[7] = r_2 & 0xFF;
+		dimming_gamma_120hz[8] = g_2 & 0xFF;
+		dimming_gamma_120hz[9] = ((g_3 & 0x0300) >> 2) | ((b_3 & 0x0300) >> 4) | ((r_2 & 0x0300) >> 6) | ((g_2 & 0x0300) >> 8);
+		dimming_gamma_120hz[10] = b_2 & 0xFF;
+		dimming_gamma_120hz[11] = r_1 & 0xFF;
+		dimming_gamma_120hz[12] = g_1 & 0xFF;
+		dimming_gamma_120hz[13] = b_1 & 0xFF;
+		dimming_gamma_120hz[14] = ((b_2 & 0x0300) >> 2) | ((r_1 & 0x0300) >> 4) | ((g_1 & 0x0300) >> 6) | ((b_1 & 0x0300) >> 8);
+
+		r_4 = ((dimming_gamma_60hz[4] & 0xC0) << 2) | dimming_gamma_60hz[0];
+		if (r_4 < 0) {
+			r_4 = 0;
+			DSI_ERR("2nit 60hz: r_4 = 0");
+		}
+		g_4 = ((dimming_gamma_60hz[4] & 0x30) << 4) | dimming_gamma_60hz[1];
+		if (g_4 < 0) {
+			g_4 = 0;
+			DSI_ERR("2nit 60hz: g_4 = 0");
+		}
+		b_4 = ((dimming_gamma_60hz[4] & 0x0C) << 6)| dimming_gamma_60hz[2];
+		if (b_4 < 0) {
+			b_4 = 0;
+			DSI_ERR("2nit 60hz: b_4 = 0");
+		}
+		r_3 = r_4 - 53;
+		if (r_3 < 0) {
+			r_3 = 0;
+			DSI_ERR("2nit 60hz: r_3 = 0");
+		}
+		g_3 = g_4 - 27;
+		if (g_3 < 0) {
+			g_3 = 0;
+			DSI_ERR("2nit 60hz: g_3 = 0");
+		}
+		b_3 = b_4 - 23;
+		if (b_3 < 0) {
+			b_3 = 0;
+			DSI_ERR("2nit 60hz: b_3 = 0");
+		}
+		r_2 = r_4 - 86;
+		if (r_2 < 0) {
+			r_2 = 0;
+			DSI_ERR("2nit 60hz: r_2 = 0");
+		}
+		g_2 = g_4 - 44;
+		if (g_2 < 0) {
+			g_2 = 0;
+			DSI_ERR("2nit 60hz: g_2 = 0");
+		}
+		b_2 = b_4 - 37;
+		if (b_2 < 0) {
+			b_2 = 0;
+			DSI_ERR("2nit 60hz: b_2 = 0");
+		}
+		r_1 = r_4 - 170;
+		if (r_1 < 0) {
+			r_1 = 0;
+			DSI_ERR("2nit 60hz: r_1 = 0");
+		}
+		g_1 = g_4 - 88;
+		if (g_1 < 0) {
+			g_1 = 0;
+			DSI_ERR("2nit 60hz: g_1 = 0");
+		}
+		b_1 = b_4 - 73;
+		if (b_1 < 0) {
+			b_1 = 0;
+			DSI_ERR("2nit 60hz: b_1 = 0");
+		}
+		dimming_gamma_60hz[3] = r_3 & 0xFF;
+		dimming_gamma_60hz[4] = (dimming_gamma_60hz[4] & 0xFC) | ((r_3 & 0x0300) >> 8);
+		dimming_gamma_60hz[5] = g_3 & 0xFF;
+		dimming_gamma_60hz[6] = b_3 & 0xFF;
+		dimming_gamma_60hz[7] = r_2 & 0xFF;
+		dimming_gamma_60hz[8] = g_2 & 0xFF;
+		dimming_gamma_60hz[9] = ((g_3 & 0x0300) >> 2) | ((b_3 & 0x0300) >> 4) | ((r_2 & 0x0300) >> 6) | ((g_2 & 0x0300) >> 8);
+		dimming_gamma_60hz[10] = b_2 & 0xFF;
+		dimming_gamma_60hz[11] = r_1 & 0xFF;
+		dimming_gamma_60hz[12] = g_1 & 0xFF;
+		dimming_gamma_60hz[13] = b_1 & 0xFF;
+		dimming_gamma_60hz[14] = ((b_2 & 0x0300) >> 2) | ((r_1 & 0x0300) >> 4) | ((g_1 & 0x0300) >> 6) | ((b_1 & 0x0300) >> 8);
+
+		r_4 = ((dimming_gamma_60hz[19] & 0xC0) << 2) | dimming_gamma_60hz[15];
+		if (r_4 < 0) {
+			r_4 = 0;
+			DSI_ERR("15nit 60hz: r_4 = 0");
+		}
+		g_4 = ((dimming_gamma_60hz[19] & 0x30) << 4) | dimming_gamma_60hz[16];
+		if (g_4 < 0) {
+			g_4 = 0;
+			DSI_ERR("15nit 60hz: g_4 = 0");
+		}
+		b_4 = ((dimming_gamma_60hz[19] & 0x0C) << 6)| dimming_gamma_60hz[17];
+		if (b_4 < 0) {
+			b_4 = 0;
+			DSI_ERR("15nit 60hz: b_4 = 0");
+		}
+		r_3 = r_4 - 55;
+		if (r_3 < 0) {
+			r_3 = 0;
+			DSI_ERR("15nit 60hz: r_3 = 0");
+		}
+		g_3 = g_4 - 23;
+		if (g_3 < 0) {
+			g_3 = 0;
+			DSI_ERR("15nit 60hz: g_3 = 0");
+		}
+		b_3 = b_4 - 42;
+		if (b_3 < 0) {
+			b_3 = 0;
+			DSI_ERR("15nit 60hz: b_3 = 0");
+		}
+		r_2 = r_4 - 195;
+		if (r_2 < 0) {
+			r_2 = 0;
+			DSI_ERR("15nit 60hz: r_2 = 0");
+		}
+		g_2 = g_4 - 30;
+		if (g_2 < 0) {
+			g_2 = 0;
+			DSI_ERR("15nit 60hz: g_2 = 0");
+		}
+		b_2 = b_4 - 53;
+		if (b_2 < 0) {
+			b_2 = 0;
+			DSI_ERR("15nit 60hz: b_2 = 0");
+		}
+		r_1 = r_4 - 245;
+		if (r_1 < 0) {
+			r_1 = 0;
+			DSI_ERR("15nit 60hz: r_1 = 0");
+		}
+		g_1 = g_4 - 52;
+		if (g_1 < 0) {
+			g_1 = 0;
+			DSI_ERR("15nit 60hz: g_1 = 0");
+		}
+		b_1 = b_4 - 84;
+		if (b_1 < 0) {
+			b_1 = 0;
+			DSI_ERR("15nit 60hz: b_1 = 0");
+		}
+		dimming_gamma_60hz[18] = r_3 & 0xFF;
+		dimming_gamma_60hz[19] = (dimming_gamma_60hz[19] & 0xFC) | ((r_3 & 0x0300) >> 8);
+		dimming_gamma_60hz[20] = g_3 & 0xFF;
+		dimming_gamma_60hz[21] = b_3 & 0xFF;
+		dimming_gamma_60hz[22] = r_2 & 0xFF;
+		dimming_gamma_60hz[23] = g_2 & 0xFF;
+		dimming_gamma_60hz[24] = ((g_3 & 0x0300) >> 2) | ((b_3 & 0x0300) >> 4) | ((r_2 & 0x0300) >> 6) | ((g_2 & 0x0300) >> 8);
+		dimming_gamma_60hz[25] = b_2 & 0xFF;
+		dimming_gamma_60hz[26] = r_1 & 0xFF;
+		dimming_gamma_60hz[27] = g_1 & 0xFF;
+		dimming_gamma_60hz[28] = b_1 & 0xFF;
+		dimming_gamma_60hz[29] = ((b_2 & 0x0300) >> 2) | ((r_1 & 0x0300) >> 4) | ((g_1 & 0x0300) >> 6) | ((b_1 & 0x0300) >> 8);
+	}
+
+	for (i = 0; i < 15; i++) {
+		if (dimming_gamma_120hz[i] < 0) {
+			dimming_gamma_120hz[i] = 0;
+			DSI_ERR("dimming_gamma_120hz[%d] = 0", i);
+		}
+		if (dimming_gamma_60hz[i] < 0) {
+			dimming_gamma_60hz[i] = 0;
+			DSI_ERR("dimming_gamma_60hz[%d] = 0", i);
+		}
+	}
+
+	for (i = 15; i < 30; i++) {
+		if (dimming_gamma_60hz[i] < 0) {
+			dimming_gamma_60hz[i] = 0;
+			DSI_ERR("dimming_gamma_60hz[%d] = 0", i);
+		}
+	}
+}
+
+int dsi_panel_dimming_gamma_write(struct dsi_panel *panel)
+{
+	int i = 0;
+	int rc = 0;
+	int count = 0;
+	unsigned char *payload;
+	struct dsi_display_mode *mode;
+	struct dsi_cmd_desc *cmds;
+
+	if (strcmp(panel->name, "samsung ana6706 dsc cmd mode panel") != 0) {
+		return 0;
+	}
+
+	if (!panel || !panel->cur_mode) {
+		DSI_ERR("Invalid params\n");
+		return -EINVAL;
+	}
+
+	mode = panel->cur_mode;
+
+	count = mode->priv_info->cmd_sets[DSI_CMD_SET_GAMMA_CHANGE_WRITE].count;
+	if (!count) {
+		DSI_ERR("This panel does not support gamma change write command\n");
+		return -EINVAL;
+	} else {
+		cmds = mode->priv_info->cmd_sets[DSI_CMD_SET_GAMMA_CHANGE_WRITE].cmds;
+
+		payload = (u8 *)cmds[2].msg.tx_buf;
+		for (i = 1; i < 13; i++)
+			payload[i] = dimming_gamma_120hz[i+2];
+
+		payload = (u8 *)cmds[7].msg.tx_buf;
+		for (i = 1; i < 13; i++)
+			payload[i] = dimming_gamma_60hz[i+2];
+
+		payload = (u8 *)cmds[12].msg.tx_buf;
+		for (i = 1; i < 13; i++)
+			payload[i] = dimming_gamma_60hz[i+17];
+
+		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_GAMMA_CHANGE_WRITE);
+		if (rc) {
+			DSI_ERR("Failed to send DSI_CMD_SET_GAMMA_CHANGE_WRITE commands\n");
+		}
+		DSI_ERR("Send DSI_CMD_SET_GAMMA_CHANGE_WRITE cmds.\n");
+	}
+
 	return rc;
 }
 
