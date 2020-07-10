@@ -8,9 +8,6 @@
 
 #define IRIS_CFG_NUM	2
 
-// use dual
-#define PXLW_IRIS_DUAL
-
 #define IRIS_FIRMWARE_NAME	"iris5.fw"
 #define IRIS_CCF1_FIRMWARE_NAME "iris5_ccf1.fw"
 #define IRIS_CCF2_FIRMWARE_NAME "iris5_ccf2.fw"
