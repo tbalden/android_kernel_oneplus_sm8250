@@ -1,3 +1,4 @@
+
 #include <drm/drm_bridge.h>
 #include <drm/drm_encoder.h>
 #include "dsi_drm.h"
@@ -59,6 +60,24 @@ void iris_lp_preinit(void)
 	iris_one_wired_cmd_init(pcfg->panel);
 }
 
+/* clear some pmu domain */
+void iris_clear_pmu(void)
+{
+	struct iris_update_regval regval;
+	struct iris_cfg *pcfg;
+
+	pcfg = iris_get_cfg();
+
+	iris_bsram_power = false;
+
+	regval.ip = IRIS_IP_SYS;
+	regval.opt_id = ID_SYS_PMU_CTRL;
+	regval.mask = 0x000000b8; /*clear MIPI2, BSRAM, FRC, DSCU */
+	regval.value = 0x0;
+
+	iris_update_bitmask_regval_nonread(&regval, true);
+}
+
 /* init iris low power */
 void iris_lp_init(void)
 {
@@ -80,6 +99,8 @@ void iris_lp_init(void)
 		IRIS_LOGD(" [%s, %d] close psr_mif osd first address eco.", __func__, __LINE__);
 		iris_psf_mif_dyn_addr_set(false);
 	}
+
+	iris_clear_pmu();
 
 	if (pcfg->lp_ctrl.ulps_lp) {
 		iris_ulps_source_sel(ULPS_MAIN);
@@ -1444,6 +1465,9 @@ int iris_lp_debugfs_init(struct dsi_display *display)
 
 	debugfs_create_u32("trace", 0644, pcfg->dbg_root,
 		(u32 *)&debug_trace_opt);
+
+	debugfs_create_u32("dual_test", 0644, pcfg->dbg_root,
+		(u32 *)&pcfg->dual_test);
 
 	debugfs_create_bool("esd_enable", 0644, pcfg->dbg_root,
 		&(pcfg->lp_ctrl.esd_enable));
