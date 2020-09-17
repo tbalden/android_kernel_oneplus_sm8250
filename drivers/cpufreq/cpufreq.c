@@ -44,6 +44,25 @@
 #define GOLD_CPU_NUMBER 4
 #define GOLD_PLUS_CPU_NUMBER 7
 
+#ifdef CONFIG_UCI
+#include <linux/uci/uci.h>
+#endif
+
+#if 1
+static int batterysaver = 0; // 0 - 1 - 3
+// default 0, seriously cutting back max freqs for sunshine inside car/long gps tracking...
+// 1 medium cutback, 2 full cutback, 3 full cutback and disable touch freq min boost
+static int batterysaver_level = 0; // 0 - 1 - 3
+#define BATTERY_SAVER_MAX_LEVEL 3
+#endif
+
+#ifdef CONFIG_UCI
+static void uci_user_listener(void) {
+    batterysaver = !!uci_get_user_property_int_mm("batterysaver", 0,0,1);
+    batterysaver_level = uci_get_user_property_int_mm("batterysaver_level", 0,0,BATTERY_SAVER_MAX_LEVEL);
+}
+#endif
+
 static LIST_HEAD(cpufreq_policy_list);
 
 static inline bool policy_is_inactive(struct cpufreq_policy *policy)
@@ -527,6 +546,33 @@ void cpufreq_disable_fast_switch(struct cpufreq_policy *policy)
 }
 EXPORT_SYMBOL_GPL(cpufreq_disable_fast_switch);
 
+#ifdef CONFIG_UCI
+// cpu max freqs for saver modes...
+static int batterysaver_max_freqs[BATTERY_SAVER_MAX_LEVEL][8] = {
+	// little x 4 , big x 3, prime x 1 - clusters
+	// saver 1
+	{ 1516800,1516800,1516800,1516800,
+	1670400,1670400,1670400,
+	1670400 },
+	// saver 2
+	{ 1075200,1075200,1075200,1075200,
+	1171200,1171200,1171200,
+	1171200 },
+	// saver 3
+	{ 1075200,1075200,1075200,1075200,
+	1056000,1056000,1056000,
+	1171200 }
+};
+
+static int get_cpu_max_for_core(unsigned int cpu, int batterysaverlevel) {
+	if (cpu<=7 && batterysaverlevel>0 && batterysaverlevel<=BATTERY_SAVER_MAX_LEVEL) {
+		return batterysaver_max_freqs[batterysaverlevel-1][cpu];
+	} else {
+	    return -EINVAL;
+	}
+}
+#endif
+
 /**
  * cpufreq_driver_resolve_freq - Map a target frequency to a driver-supported
  * one.
@@ -546,9 +592,23 @@ unsigned int cpufreq_driver_resolve_freq(struct cpufreq_policy *policy,
 	unsigned int min_target;
 #endif
 
+
 #ifdef CONFIG_CONTROL_CENTER
 	if (likely(policy->cc_enable))
 		target_freq = clamp_val(target_freq, policy->cc_min, policy->cc_max);
+#endif
+
+#ifdef CONFIG_UCI
+	if (batterysaver>0) {
+		unsigned int cpu = policy->cpu;
+		int max = 0;
+		max = get_cpu_max_for_core(cpu,batterysaver_level);
+#if 0
+		pr_info("%s max freq for core: %u saver_level %d  cpu: %d  target: %u",__func__,max,batterysaver_level,cpu,target_freq);
+#endif
+		if (max<=0) max = policy->max;
+		target_freq = clamp_val(target_freq, policy->min, max);
+	} else
 #endif
 	target_freq = clamp_val(target_freq, policy->min, policy->max);
 	if (policy->cpu >= cluster2_first_cpu)
@@ -772,6 +832,23 @@ static ssize_t show_scaling_cur_freq(struct cpufreq_policy *policy, char *buf)
 static int cpufreq_set_policy(struct cpufreq_policy *policy,
 				struct cpufreq_policy *new_policy);
 
+#if 1
+static int skip_or_tune_min_freq(struct cpufreq_policy *cur_policy, struct cpufreq_policy *new_policy) {
+	unsigned int cpu = cur_policy->cpu;
+	if (batterysaver && batterysaver_level==BATTERY_SAVER_MAX_LEVEL) {
+		int saver_max = 0;
+		saver_max = get_cpu_max_for_core(cpu,batterysaver_level);
+		pr_info("%s MIN freq tuning: required min freq: %d - setting saver max freq: %d\n",__func__,new_policy->min, saver_max);
+		if (saver_max>=0 && saver_max < new_policy->min) {
+			// if battery saver max freq is BELOW the new min (freq boosting supposedly) cut back to saver maximum...
+			new_policy->min = saver_max;
+		}
+	}
+	return 0;
+}
+
+#endif
+
 /**
  * cpufreq_per_cpu_attr_write() / store_##file_name() - sysfs write access
  */
@@ -786,11 +863,18 @@ static ssize_t store_##file_name					\
 	new_policy.min = policy->user_policy.min;			\
 	new_policy.max = policy->user_policy.max;			\
 									\
+	new_policy.min = new_policy.user_policy.min;			\
+	new_policy.max = new_policy.user_policy.max;			\
+									\
 	ret = sscanf(buf, "%u", &new_policy.object);			\
 	if (ret != 1)							\
 		return -EINVAL;						\
 									\
 	temp = new_policy.object;					\
+	if (&policy->object == &policy->min && 				\
+		skip_or_tune_min_freq(policy, &new_policy))		\
+		return count;						\
+									\
 	ret = cpufreq_set_policy(policy, &new_policy);		\
 	if (!ret)							\
 		policy->user_policy.object = temp;			\
@@ -2387,6 +2471,27 @@ static int cpufreq_set_policy(struct cpufreq_policy *policy,
 	policy->cc_max = policy->max;
 	spin_unlock(&policy->cc_lock);
 #endif
+#ifdef CONFIG_UCI
+	if (batterysaver && batterysaver_level==BATTERY_SAVER_MAX_LEVEL) {
+		unsigned int cpu = policy->cpu;
+		int max = 0;
+		pr_debug("%s [cleanslate_policy] new min and max freqs are %u - %u kHz\n",__func__,
+			 policy->min, policy->max);
+		max = get_cpu_max_for_core(cpu,batterysaver_level);
+		if (policy->min>max) {
+			pr_debug("%s [cleanslate_policy] freq for core: %u saver_level %d  cpu: %d  target MIN: %u",__func__,max,batterysaver_level,cpu,policy->min);
+			policy->min = max;
+			new_policy->min = max;
+		}
+		if (policy->max>max) {
+			pr_debug("%s [cleanslate_policy] freq for core: %u saver_level %d  cpu: %d  target MAX: %u",__func__,max,batterysaver_level,cpu,policy->max);
+			policy->max = max;
+			new_policy->max = max;
+		}
+		pr_debug("%s [cleanslate_policy] OVERRIDDEN: new min and max freqs are %u - %u kHz\n",__func__,
+			 policy->min, policy->max);
+	}
+#endif
 	trace_cpu_frequency_limits(policy);
 
 #ifdef CONFIG_ONEPLUS_HEALTHINFO
@@ -2750,6 +2855,9 @@ static int __init cpufreq_core_init(void)
 	cpufreq_global_kobject = kobject_create_and_add("cpufreq", &cpu_subsys.dev_root->kobj);
 	BUG_ON(!cpufreq_global_kobject);
 
+#ifdef CONFIG_UCI
+	uci_add_user_listener(uci_user_listener);
+#endif
 	return 0;
 }
 module_param(off, int, 0444);
