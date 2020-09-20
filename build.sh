@@ -14,7 +14,7 @@ echo
 mkdir -p out
 export ARCH=arm64
 export SUBARCH=arm64
-BASE_PATH=/home/user/pixel
+BASE_PATH=/home/android/pixel
 EXT_UTILS=$BASE_PATH/wahoo-kernel-tools/bin
 export CLANG_PATH=$BASE_PATH/clang-10/bin
 export PATH=${CLANG_PATH}:${EXT_UTILS}:${PATH}
