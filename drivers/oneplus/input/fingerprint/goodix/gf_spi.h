@@ -152,7 +152,7 @@ struct gf_dev {
 	int irq_enabled;
 	int clk_enabled;
 
-	struct regulator *vdd_3v2;
+	struct regulator *vdd_3v3;
 	int regulator_vdd_vmin;
 	int regulator_vdd_vmax;
 	int regulator_vdd_current;

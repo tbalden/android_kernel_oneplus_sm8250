@@ -48,7 +48,6 @@ void sendnlmsg(char *msg)
 	}
 }
 
-//#ifdef VENDOR_EDIT
 void sendnlmsg_tp(struct fp_underscreen_info *msg, int length)
 {
 	struct sk_buff *skb_1;
@@ -76,7 +75,7 @@ void sendnlmsg_tp(struct fp_underscreen_info *msg, int length)
 		pr_err("send msg from kernel to usespace failed ret 0x%x\n", ret);
 	}
 }
-//#endif
+
 void nl_data_ready(struct sk_buff *__skb)
 {
 	struct sk_buff *skb;

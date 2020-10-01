@@ -12,6 +12,7 @@
 #include <linux/err.h>
 
 #include "gf_spi.h"
+#include "../fingerprint_detect/fingerprint_detect.h"
 
 #if defined(USE_SPI_BUS)
 #include <linux/spi/spi.h>
@@ -116,6 +117,31 @@ void gf_cleanup(struct gf_dev *gf_dev)
 int gf_power_on(struct gf_dev* gf_dev)
 {
 	int rc = 0;
+	struct device *dev = &gf_dev->spi->dev;
+	struct regulator *vreg = gf_dev->vdd_3v3;
+	if (!vreg) {
+	    vreg = regulator_get(dev, "fppower");
+	    if (IS_ERR(vreg)) {
+	        pr_err("Unable to get fppower power.\n");
+	        return PTR_ERR(vreg);
+	    }
+	}
+	if (regulator_count_voltages(vreg) > 0) {
+	    rc = regulator_set_voltage(vreg, 3024000, 3024000);
+	    if (rc) {
+	        pr_err("Unable to set voltage on fppower, %d\n", rc);
+	    }
+	}
+	rc = regulator_set_load(vreg, 150000);
+	if (rc < 0) {
+	    pr_err("Unable to set current on fppower, %d\n", rc);
+	}
+	rc = regulator_enable(vreg);
+	if (rc) {
+	    pr_err("error enabling fppower: %d\n", rc);
+	    regulator_put(vreg);
+	    gf_dev->vdd_3v3  = NULL;
+	}
 
 	pr_info("---- power on ok ----\n");
 
@@ -125,6 +151,16 @@ int gf_power_on(struct gf_dev* gf_dev)
 int gf_power_off(struct gf_dev* gf_dev)
 {
     int rc = 0;
+
+	struct regulator *vreg = gf_dev->vdd_3v3;
+	if (vreg) {
+		if (regulator_is_enabled(vreg)) {
+			regulator_disable(vreg);
+			pr_err("disabled fppower\n");
+		}
+		regulator_put(vreg);
+		gf_dev->vdd_3v3 = NULL;
+	}
 
     pr_info("---- power off ----\n");
 
