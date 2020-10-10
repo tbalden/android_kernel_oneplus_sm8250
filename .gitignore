@@ -146,3 +146,6 @@ kernel/configs/android-*.cfg
 
 # OP SLA feature
 #opslalib/slalib
+
+/out/
+/out_pro/
