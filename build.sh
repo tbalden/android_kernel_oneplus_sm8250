@@ -5,13 +5,13 @@ echo "Clean Build Directory"
 echo 
 
 #make clean && make mrproper
-#rm -rf ./out_pro
+#rm -rf ./out
 
 echo
 echo "Issue Build Commands"
 echo
 
-mkdir -p out_pro
+mkdir -p out
 export ARCH=arm64
 export SUBARCH=arm64
 BASE_PATH=/home/android/pixel
@@ -32,11 +32,11 @@ cd ..
 echo
 echo "Set DEFCONFIG"
 echo 
-make CC="clang" O=out_pro cleanslate_p_defconfig
-#cleanslate_p_defconfig
+make CC="clang" O=out cleanslate_defconfig
+#cleanslate_defconfig
 
 echo
 echo "Build The Good Stuff"
 echo 
 
-make CC="clang" O=out_pro -j4
+make CC="clang" O=out -j4
