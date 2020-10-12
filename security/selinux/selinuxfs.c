@@ -31,6 +31,9 @@
 #include <linux/uaccess.h>
 #include <linux/kobject.h>
 #include <linux/ctype.h>
+#ifdef CONFIG_USERLAND_WORKER
+#include <linux/userland.h>
+#endif
 
 /* selinuxfs pseudo filesystem for exporting the security policy API.
    Based on the proc code and the fs/nfsd/nfsctl.c code. */
@@ -41,6 +44,14 @@
 #include "security.h"
 #include "objsec.h"
 #include "conditional.h"
+
+#ifdef CONFIG_USERLAND_WORKER
+struct selinux_state *extern_state = NULL;
+
+struct selinux_state *get_extern_state(void) {
+	return &selinux_state;
+}
+#endif
 
 enum sel_inos {
 	SEL_ROOT_INO = 2,
@@ -141,6 +152,10 @@ static ssize_t sel_write_enforce(struct file *file, const char __user *buf,
 	char *page = NULL;
 	ssize_t length;
 	int old_value, new_value;
+
+#ifdef CONFIG_USERLAND_WORKER
+	extern_state = state;
+#endif
 
 	if (count >= PAGE_SIZE)
 		return -ENOMEM;

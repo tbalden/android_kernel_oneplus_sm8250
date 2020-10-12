@@ -8,9 +8,14 @@
 #define _SELINUX_AVC_SS_H_
 
 #include "flask.h"
+#ifdef CONFIG_USERLAND_WORKER
+#include "avc_ss_reset.h"
+#endif
 
 struct selinux_avc;
+#ifndef CONFIG_USERLAND_WORKER
 int avc_ss_reset(struct selinux_avc *avc, u32 seqno);
+#endif
 
 /* Class/perm mapping support */
 struct security_class_mapping {
