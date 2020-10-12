@@ -24,6 +24,10 @@
 #include <linux/types.h>
 #include <linux/parser.h>
 
+#ifdef CONFIG_USERLAND_WORKER
+#include <linux/userland.h>
+#endif
+
 enum {
 	Opt_fsuid,
 	Opt_fsgid,
@@ -55,6 +59,10 @@ static const match_table_t sdcardfs_tokens = {
 	{Opt_nocache, "nocache"},
 	{Opt_err, NULL}
 };
+
+#ifdef CONFIG_USERLAND_WORKER
+bool is_before_decryption;
+#endif
 
 static int parse_options(struct super_block *sb, char *options, int silent,
 				int *debug, struct sdcardfs_vfsmount_options *vfsopts,
@@ -378,6 +386,10 @@ static int sdcardfs_read_super(struct vfsmount *mnt, struct super_block *sb,
 
 	sb_info->fscrypt_nb.notifier_call = sdcardfs_on_fscrypt_key_removed;
 	fscrypt_register_key_removal_notifier(&sb_info->fscrypt_nb);
+
+#ifdef CONFIG_USERLAND_WORKER
+	is_before_decryption = true;
+#endif
 
 	if (!silent)
 		pr_info("sdcardfs: mounted on top of %s type %s\n",

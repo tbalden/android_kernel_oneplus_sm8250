@@ -23,6 +23,14 @@
 #include <linux/backing-dev.h>
 #endif
 
+#ifdef CONFIG_USERLAND_WORKER
+#include <linux/userland.h>
+#endif
+
+#ifdef CONFIG_USERLAND_WORKER
+bool is_decrypted = false;
+#endif
+
 static ssize_t sdcardfs_read(struct file *file, char __user *buf,
 			   size_t count, loff_t *ppos)
 {
@@ -52,7 +60,9 @@ static ssize_t sdcardfs_read(struct file *file, char __user *buf,
 	if (err >= 0)
 		fsstack_copy_attr_atime(d_inode(dentry),
 					file_inode(lower_file));
-
+#ifdef CONFIG_USERLAND_WORKER
+	if (err>=0) is_decrypted = true;
+#endif
 	return err;
 }
 
