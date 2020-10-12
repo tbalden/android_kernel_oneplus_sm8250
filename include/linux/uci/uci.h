@@ -14,12 +14,25 @@
 #define UCI_SYS_FILE_END "uci_sys.cfg"
 #define UCI_KERNEL_FILE_END "uci_kernel.out"
 
-#define UCI_HOSTS_FILE "/storage/emulated/0/hosts_k"
-#define UCI_HOSTS_FILE_END "hosts_k"
+#define UCI_HOSTS_FILE_SD "/storage/emulated/0/__hosts_k"
+#define UCI_HOSTS_FILE "/dev/__hosts_k"
+#define UCI_HOSTS_FILE_END "__hosts_k"
+
+#define USERLAND_HOSTS_ZIP "/dev/hosts_k.zip"
+#define USERLAND_OVERLAY_SH "/dev/overlay.sh"
+#define USERLAND_HOSTS_ZIP_END "hosts_k.zip"
+#define USERLAND_OVERLAY_SH_END "overlay.sh"
 
 // pstore files to grant access to, without superuser elevation
 #define UCI_PSTORE_FILE_0 "/sys/fs/pstore/console-ramoops"
 #define UCI_PSTORE_FILE_1 "/sys/fs/pstore/console-ramoops-0"
+
+#define UCI_SDCARD_DMESG "/storage/emulated/0/__uci-cs-dmesg.txt"
+#define UCI_SDCARD_DMESG_DATA "/data/media/0/__uci-cs-dmesg.txt"
+#define UCI_SDCARD_DMESG_END "__uci-cs-dmesg.txt"
+#define UCI_SDCARD_RAMOOPS "/storage/emulated/0/__console-ramoops-0.txt"
+#define UCI_SDCARD_RAMOOPS_DATA "/data/media/0/__console-ramoops-0.txt"
+#define UCI_SDCARD_RAMOOPS_END "__console-ramoops-0.txt"
 
 #define UCI_PSTORE_FILE_0_END "console-ramoops"
 #define UCI_PSTORE_FILE_1_END "console-ramoops-0"

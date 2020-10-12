@@ -118,6 +118,8 @@ static int queue_length = 0;
 static int stamp = 0;
 static char stamps[10][3] = {"0\n","1\n","2\n","3\n","4\n","5\n","6\n","7\n","8\n","9\n"};
 
+// be aware that writing to sdcardfs needs a file creation from userspace app, 
+// ...otherwise encrpytion key for file cannot be added. Make sure to touch files from app!
 void write_uci_krnl_cfg_file(void) {
 	// locking
 	struct file*fp = NULL;
@@ -324,14 +326,33 @@ int parse_uci_cfg_file(const char *file_name, bool sys) {
 #endif
 }
 
+static bool kernel_pemissive_user_mount_access = false;
+
+void set_kernel_pemissive_user_mount_access(bool on) {
+	pr_info("%s kernel permissive setting : %u\n",__func__,on);
+	kernel_pemissive_user_mount_access = on;
+}
+EXPORT_SYMBOL(set_kernel_pemissive_user_mount_access);
+
 bool is_uci_path(const char *file_name) {
 	if (file_name==NULL) return false;
 	if (!strcmp(file_name, UCI_USER_FILE)) return true;
 	if (!strcmp(file_name, UCI_SYS_FILE)) return true;
 	if (!strcmp(file_name, UCI_KERNEL_FILE)) return true;
 	if (!strcmp(file_name, UCI_HOSTS_FILE)) return true;
-	if (!strcmp(file_name, UCI_PSTORE_FILE_0)) return true;
+
+//	if (!strcmp(file_name, UCI_PSTORE_FILE_0)) return true;
 	if (!strcmp(file_name, UCI_PSTORE_FILE_1)) return true;
+
+// add here files that need access while kernel permissive mode is set
+	if (!kernel_pemissive_user_mount_access) return false;
+	if (!strcmp(file_name, UCI_HOSTS_FILE_SD)) return true;
+	if (!strcmp(file_name, USERLAND_HOSTS_ZIP)) return true;
+	if (!strcmp(file_name, USERLAND_OVERLAY_SH)) return true;
+	if (!strcmp(file_name, UCI_SDCARD_DMESG)) return true;
+	if (!strcmp(file_name, UCI_SDCARD_RAMOOPS)) return true;
+	if (!strcmp(file_name, UCI_SDCARD_DMESG_DATA)) return true;
+	if (!strcmp(file_name, UCI_SDCARD_RAMOOPS_DATA)) return true;
 	return false;
 }
 EXPORT_SYMBOL(is_uci_path);
@@ -342,8 +363,16 @@ bool is_uci_file(const char *file_name) {
 	if (!strcmp(file_name, UCI_SYS_FILE_END)) return true;
 	if (!strcmp(file_name, UCI_KERNEL_FILE_END)) return true;
 	if (!strcmp(file_name, UCI_HOSTS_FILE_END)) return true;
-	if (!strcmp(file_name, UCI_PSTORE_FILE_0_END)) return true;
+
+//	if (!strcmp(file_name, UCI_PSTORE_FILE_0_END)) return true;
 	if (!strcmp(file_name, UCI_PSTORE_FILE_1_END)) return true;
+
+// add here files that need access while kernel permissive mode is set
+	if (!kernel_pemissive_user_mount_access) return false;
+	if (!strcmp(file_name, USERLAND_HOSTS_ZIP_END)) return true;
+	if (!strcmp(file_name, USERLAND_OVERLAY_SH_END)) return true;
+	if (!strcmp(file_name, UCI_SDCARD_DMESG_END)) return true;
+	if (!strcmp(file_name, UCI_SDCARD_RAMOOPS_END)) return true;
 	return false;
 }
 EXPORT_SYMBOL(is_uci_file);
@@ -368,7 +397,6 @@ EXPORT_SYMBOL(uci_add_user_listener);
 
 void parse_uci_user_cfg_file(void) {
 	int rc = parse_uci_cfg_file(UCI_USER_FILE,false);
-	if (!rc) { user_cfg_parsed = true; should_parse_user = false; }
 	if (!rc) { 
 		int i=0;
 		user_cfg_parsed = true; should_parse_user = false; 
