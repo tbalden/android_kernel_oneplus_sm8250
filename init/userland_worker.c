@@ -347,6 +347,8 @@ static void set_selinux_enforcing(bool enforcing, bool full_permissive) {
 			// to only let through Userspace permissions, not kernel side ones.
 			pr_info("%s [userland] kernel permissive : setting full permissive kernel suppressed: %u\n",!enforcing);
 			set_full_permissive_kernel_suppressed(!enforcing);
+			// enable fs accesses in /fs driver parts (full permissive suppression would block these as file access is in-kernel blocked)
+			set_kernel_pemissive_user_mount_access(!enforcing);
 		}
 #endif
 
