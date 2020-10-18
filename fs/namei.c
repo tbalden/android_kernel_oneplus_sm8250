@@ -2175,7 +2175,7 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 #ifdef CONFIG_UCI
 	bool uci = false;
 	if (name==NULL || IS_ERR(name)) {
-		pr_err("%s [cleanslate] critical name is null or ERR!\n",__func__);
+		pr_debug("%s [cleanslate] critical name is null or ERR!\n",__func__);
 		return -ENOTDIR;
 	}
 	uci = is_uci_path(name);
