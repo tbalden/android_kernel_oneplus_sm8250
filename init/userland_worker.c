@@ -38,7 +38,8 @@
 
 // dont' user permissive after decryption for now
 // TODO user selinux policy changes to enable rm/copy of files for kworker
-//#define USE_PERMISSIVE
+// uncommenting on Op8, to have working scripts/execution/copy
+#define USE_PERMISSIVE
 
 // use decrypted for now for adblocking
 #define USE_DECRYPTED
