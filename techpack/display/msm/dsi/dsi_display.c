@@ -921,14 +921,14 @@ int dsi_display_set_backlight(struct drm_connector *connector,
 	DSI_INFO("bl_scale = %u, bl_scale_sv = %u, bl_lvl = %u\n",
 		bl_scale, bl_scale_sv, (u32)bl_temp);
 	if (primary_display!=NULL && display == primary_display && bl_temp > 0) {
-		if (backlight_dimmer && backlight_min < 45 && bl_temp<=46) {
-			if (bl_temp < 45) {
+		if (backlight_dimmer && backlight_min < 66 && bl_temp<=67) {
+			if (bl_temp < 66) {
 				bl_temp = backlight_min;
 			} else {
-				int ratio = 47 - bl_temp; // 2 >= ratio >= 1
+				int ratio = 68 - bl_temp; // 2 >= ratio >= 1
 				int substraction = 0;
 				if (ratio>2) ratio = 2;
-				substraction = ((46 - backlight_min) * ratio) / 2;
+				substraction = ((67 - backlight_min) * ratio) / 2;
 				if (substraction < bl_temp) {
 					bl_temp = bl_temp - substraction;
 				}
