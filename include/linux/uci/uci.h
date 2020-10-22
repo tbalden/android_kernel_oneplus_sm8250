@@ -15,11 +15,26 @@
 #define UCI_KERNEL_FILE_END "uci_kernel.out"
 
 #define UCI_HOSTS_FILE_SD "/storage/emulated/0/__hosts_k"
-#define UCI_HOSTS_FILE "/dev/__hosts_k"
 #define UCI_HOSTS_FILE_END "__hosts_k"
 
+// path differences =========================================
+#ifdef CONFIG_USERLAND_WORKER_DATA_LOCAL
+
+#define USERLAND_ROOT_PATH "/data/local/tmp/"
+#define USERLAND_HOSTS_ZIP "/data/local/tmp/hosts_k.zip"
+#define USERLAND_OVERLAY_SH "/data/local/tmp/overlay.sh"
+#define UCI_HOSTS_FILE "/data/local/tmp/__hosts_k"
+
+#else
+
+#define USERLAND_ROOT_PATH "/dev/"
 #define USERLAND_HOSTS_ZIP "/dev/hosts_k.zip"
 #define USERLAND_OVERLAY_SH "/dev/overlay.sh"
+#define UCI_HOSTS_FILE "/dev/__hosts_k"
+
+#endif
+// ==========================================================
+
 #define USERLAND_HOSTS_ZIP_END "hosts_k.zip"
 #define USERLAND_OVERLAY_SH_END "overlay.sh"
 
