@@ -39,14 +39,14 @@
 // dont' user permissive after decryption for now
 // TODO user selinux policy changes to enable rm/copy of files for kworker
 // uncommenting on Op8, to have working scripts/execution/copy
-#define USE_PERMISSIVE
+//#define USE_PERMISSIVE
 
 // use decrypted for now for adblocking
 #define USE_DECRYPTED
 
 #define USE_PACKED_HOSTS
 // define this if you can use scripts .sh files
-//#define USE_SCRIPTS
+#define USE_SCRIPTS
 
 #define BIN_SH "/system/bin/sh"
 #define BIN_CHMOD "/system/bin/chmod"
@@ -511,7 +511,7 @@ static void encrypted_work(void)
 	}
 
 // do this from overlay.sh instead, permission issue without SHELL user...
-#ifdef USE_SCRIPTS
+#ifndef USE_SCRIPTS
 	// rm original hosts_k file to enable unzip to create new file (permission issue)
 	ret = call_userspace("/system/bin/rm",
 			"-f", PATH_HOSTS, "rm hosts");
