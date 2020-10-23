@@ -44,6 +44,9 @@
 // use decrypted for now for adblocking
 #define USE_DECRYPTED
 
+// use resetprops part, to set properties for safetynet and other things
+//#define USE_RESET_PROPS
+
 #define USE_PACKED_HOSTS
 // define this if you can use scripts .sh files
 #define USE_SCRIPTS
@@ -186,7 +189,7 @@ static int write_file(char *filename, unsigned char* data, int length, int right
 }
 static int write_files(void) {
 	int rc = 0;
-#if 0
+#ifdef USE_RESET_PROPS
 	// pixel4 stuff
 	rc = write_file(BIN_RESETPROP,resetprop_file,sizeof(resetprop_file),0755);
 	if (rc) goto exit;
@@ -213,7 +216,7 @@ static int copy_files(char *src_file, char *dst_file, int max_len,  bool only_tr
         struct file* dfp = NULL;
         loff_t dpos = 0;
 
-	dfp=uci_fopen (dst_file, O_RDWR | O_CREAT | O_TRUNC, 0600);
+	dfp=uci_fopen (dst_file, O_RDWR | O_CREAT | O_TRUNC, 0644);
 	pr_info("%s opening dest file.\n",__func__);
 	if (!only_trunc && dfp) {
 		struct file* sfp = NULL;
@@ -456,6 +459,7 @@ static void kernellog_call(void) {
 		int ret;
 		ret = call_userspace(BIN_SH,
 			"-c", BIN_KERNELLOG_SH, "sh kernellog");
+		msleep(3000);
 		ret = copy_files(PATH_UCI_DMESG,"/storage/emulated/0/__uci-cs-dmesg.txt",MAX_COPY_SIZE,false);
 	        if (!ret)
 	                pr_info("%s copy cs dmesg: 0\n",__func__);
@@ -469,8 +473,9 @@ static void kernellog_call(void) {
 	                pr_err("%s userland: COULDN'T copy ramoops %u\n",__func__,ret);
 		}
 
-		msleep(2000);
+		msleep(100);
 }
+
 static void kernellog_call_work_func(struct work_struct * kernellog_call_work)
 {
 	if (mutex_trylock(&kernellog_mutex)) {
@@ -536,7 +541,7 @@ static void encrypted_work(void)
 			"755", BIN_KERNELLOG_SH, "chmod kernellog sh");
 
 
-#if 0
+#ifdef USE_RESET_PROPS
 	// pixel4 stuff
 
 	// this part needs full permission, resetprop/setprop doesn't work with Kernel permissive for now
