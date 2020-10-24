@@ -82,4 +82,14 @@ extern void uci_add_user_listener(void (*f)(void));
 /** write operations */
 extern void write_uci_out(char *message);
 
+// 19811
+#define OP8PRO         1
+// 19821
+#define OP8                2
+// 19805
+#define OP8T                3
+
+//get hardware type
+extern int uci_get_hw_version(void);
+
 #endif /* __UCI_H__ */

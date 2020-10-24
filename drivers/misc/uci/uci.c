@@ -716,6 +716,27 @@ static int fb_notifier_callback(
 }
 #endif
 
+
+//get hardware type
+static int uci_hw_version = OP8PRO;
+int uci_get_hw_version(void) {
+	return uci_hw_version;
+}
+EXPORT_SYMBOL(uci_get_hw_version);
+
+static int __init get_model(char *cmdline_model)
+{
+    if (strstr(cmdline_model, "19821")) {
+        uci_hw_version = OP8;
+    } else 
+    if (strstr(cmdline_model, "19805")) {
+	uci_hw_version = OP8T;
+    }
+    return 0;
+}
+__setup("androidboot.project_name=", get_model);
+
+
 static int __init uci_init(void)
 {
 	int rc = 0;
