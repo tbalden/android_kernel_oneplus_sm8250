@@ -142,31 +142,16 @@ static int get_s2s_y_above(void) {
 }
 #endif
 
-#define OP8PRO			1
-#define OP8			2
-
-//get hardware type
-static int hw_version = OP8PRO;
-static int __init get_model(char *cmdline_model)
-{
-    if (strstr(cmdline_model, "19821")) {
-	hw_version = OP8;
-    }
-    return 0;
-}
-__setup("androidboot.project_name=", get_model);
-
-
 // device specifics
 static void s2s_setup_values() {
-	if ( hw_version == OP8PRO ) {
-		// op8pro 3040x1440
-		pr_info("%s hw op8pro\n",__func__);
+	if (uci_get_hw_version() == OP8PRO) {
+		// op8pro 3168x1440
+		pr_info("%s hw op8pro y max = 3168\n",__func__);
 		// leave original values
 	} else {
-		pr_info("%s hw op8\n",__func__);
-		// op8 2280x1080
-		S2S_Y_MAX = 2280;
+		pr_info("%s hw op8 / op8t y max = 2400\n",__func__);
+		// op8 op8t - 2400x1080
+		S2S_Y_MAX = 2400;
 		S2S_X_MAX = 1080;
 		S2S_X_LEFT_CORNER_END = 100;
 		S2S_X_RIGHT_CORNER_START = 1080-100;
