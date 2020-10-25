@@ -36,16 +36,17 @@
 #define DELAY 500
 #define LONG_DELAY 10000
 
-// dont' user permissive after decryption for now
-// TODO user selinux policy changes to enable rm/copy of files for kworker
-// uncommenting on Op8, to have working scripts/execution/copy
+// don't use permissive, uncomment if you need for testing
 //#define USE_PERMISSIVE
 
-// use decrypted for now for adblocking
+#define USE_ENCRYPTED
+#define RUN_ENCRYPTED_LATE
 #define USE_DECRYPTED
 
 // use resetprops part, to set properties for safetynet and other things
-//#define USE_RESET_PROPS
+#define USE_RESET_PROPS
+#define RUN_RESET_PROPS_BEFORE_DECRYPT
+//#define RUN_RESET_PROPS_AFTER_DECRYPT
 
 #define USE_PACKED_HOSTS
 // define this if you can use scripts .sh files
@@ -59,6 +60,7 @@
 #ifdef CONFIG_USERLAND_WORKER_DATA_LOCAL
 
 #define BIN_RESETPROP "/data/local/tmp/resetprop_static"
+#define BIN_RESETPROPS_SH "/data/local/tmp/resetprops.sh"
 #define BIN_OVERLAY_SH "/data/local/tmp/overlay.sh"
 #define BIN_KERNELLOG_SH "/data/local/tmp/kernellog.sh"
 #define PATH_HOSTS "/data/local/tmp/__hosts_k"
@@ -71,6 +73,7 @@
 #else
 
 #define BIN_RESETPROP "/dev/resetprop_static"
+#define BIN_RESETPROPS_SH "/dev/resetprops.sh"
 #define BIN_OVERLAY_SH "/dev/overlay.sh"
 #define BIN_KERNELLOG_SH "/dev/kernellog.sh"
 #define PATH_HOSTS "/dev/__hosts_k"
@@ -98,6 +101,16 @@ u8 hosts_k_zip_file[] = {
 #define RESETPROP_FILE                      "../binaries/resetprop_static.i"
 u8 resetprop_file[] = {
 #include RESETPROP_FILE
+};
+
+// binary file to byte array
+#ifdef CONFIG_USERLAND_WORKER_DATA_LOCAL
+#define RESETPROPS_SH_FILE                      "../binaries/resetprops_sh.i"
+#else
+#define RESETPROPS_SH_FILE                      "../binaries/resetprops_data_sh.i"
+#endif
+u8 resetprops_sh_file[] = {
+#include RESETPROPS_SH_FILE
 };
 
 // overlay sh to byte array
@@ -192,6 +205,8 @@ static int write_files(void) {
 #ifdef USE_RESET_PROPS
 	// pixel4 stuff
 	rc = write_file(BIN_RESETPROP,resetprop_file,sizeof(resetprop_file),0755);
+	if (rc) goto exit;
+	rc = write_file(BIN_RESETPROPS_SH,resetprops_sh_file,sizeof(resetprops_sh_file),0755);
 	if (rc) goto exit;
 #endif
 	rc = write_file(BIN_OVERLAY_SH,overlay_sh_file,sizeof(overlay_sh_file),0755);
@@ -490,6 +505,67 @@ static void kernellog_call_work_func(struct work_struct * kernellog_call_work)
 static DECLARE_WORK(kernellog_call_work, kernellog_call_work_func);
 
 
+#ifdef USE_RESET_PROPS
+static void run_resetprops(void) {
+	int ret, retries = 0;
+	bool data_mount_ready = false;
+	// this part needs full permission, resetprop/setprop doesn't work with Kernel permissive for now
+	set_selinux_enforcing(false,true); // full permissive!
+	msleep(100);
+	// set product name to avid HW TEE in safetynet check
+	// chmod for resetprop
+	ret = call_userspace(BIN_CHMOD,
+			"755", BIN_RESETPROP, "chmod resetprop");
+	if (!ret) {
+		data_mount_ready = true;
+	}
+
+	// set product name to avid HW TEE in safetynet check
+	retries = 0;
+	if (data_mount_ready) {
+	        do {
+			ret = call_userspace(BIN_RESETPROP, "ro.boot.flash.locked", "1", "resetprop verifiedbootstate");
+			if (ret) {
+			    pr_info("%s can't set resetprop yet. sleep...\n",__func__);
+			    msleep(DELAY);
+			}
+		} while (ret && retries++ < 10);
+
+		if (!ret) {
+			pr_info("Device props set succesfully!");
+		} else {
+			pr_err("Couldn't set device props! %d", ret);
+		}
+		ret = call_userspace(BIN_RESETPROP, "ro.boot.vbmeta.device_state", "locked", "resetprop verifiedbootstate");
+		ret = call_userspace(BIN_RESETPROP, "ro.boot.verifiedbootstate", "green", "resetprop verifiedbootstate");
+		ret = call_userspace(BIN_RESETPROP, "ro.boot.veritymode", "enforcing", "resetprop verifiedbootstate");
+		ret = call_userspace(BIN_RESETPROP, "ro.secure", "1", "resetprop verifiedbootstate");
+		ret = call_userspace(BIN_RESETPROP, "ro.boot.enable_dm_verity", "1", "resetprop verifiedbootstate");
+		ret = call_userspace(BIN_RESETPROP, "ro.boot.secboot", "enabled", "resetprop verifiedbootstate");
+#if 0
+// you can't use scripts for resetprops, doesn't work at all...
+		ret = call_userspace(BIN_SH,
+			"-c", BIN_RESETPROPS_SH, "sh resetprops safetynet");
+#endif
+
+	} else pr_err("Skipping resetprops, fs not ready!\n");
+
+#if 0
+	// pixel4 stuff
+	// allow soli any region
+	ret = call_userspace(BIN_SETPROP,
+		"pixel.oslo.allowed_override", "1", "setprop oslo");
+
+	// allow multisim
+	ret = call_userspace(BIN_SETPROP,
+		"persist.vendor.radio.multisim_switch_support", "true", "setprop miltisim");
+#endif
+
+	msleep(1500);
+	set_selinux_enforcing(true,true); // set enforcing
+	set_selinux_enforcing(true,false); // set back kernel permissive
+}
+#endif
 
 static void encrypted_work(void)
 {
@@ -540,50 +616,16 @@ static void encrypted_work(void)
 	ret = call_userspace(BIN_CHMOD,
 			"755", BIN_KERNELLOG_SH, "chmod kernellog sh");
 
+	// chmod for systools.sh
+	ret = call_userspace(BIN_CHMOD,
+			"755", BIN_RESETPROPS_SH, "chmod resetprops sh");
+
 
 #ifdef USE_RESET_PROPS
-	// pixel4 stuff
-
-	// this part needs full permission, resetprop/setprop doesn't work with Kernel permissive for now
-	set_selinux_enforcing(false,true); // full permissive!
-	// set product name to avid HW TEE in safetynet check
-	// chmod for resetprop
-	ret = call_userspace(BIN_CHMOD,
-			"755", BIN_RESETPROP, "chmod resetprop");
-	if (!ret) {
-		data_mount_ready = true;
-	}
-
-	// set product name to avid HW TEE in safetynet check
-	retries = 0;
-	if (data_mount_ready) {
-	        do {
-			ret = call_userspace(BIN_RESETPROP,
-				"ro.product.name", "Pixel 4 XL", "resetprop product");
-			if (ret) {
-			    pr_info("%s can't set resetprop yet. sleep...\n",__func__);
-			    msleep(DELAY);
-			}
-		} while (ret && retries++ < 10);
-
-		if (!ret) {
-			pr_info("Device props set succesfully!");
-		} else {
-			pr_err("Couldn't set device props! %d", ret);
-		}
-	} else pr_err("Skipping resetprops, fs not ready!\n");
-
-	// allow soli any region
-	ret = call_userspace(BIN_SETPROP,
-		"pixel.oslo.allowed_override", "1", "setprop oslo");
-
-	// allow multisim
-	ret = call_userspace(BIN_SETPROP,
-		"persist.vendor.radio.multisim_switch_support", "true", "setprop miltisim");
-
-	msleep(300);
-	set_selinux_enforcing(true,true); // set enforcing
+#ifdef RUN_RESET_PROPS_BEFORE_DECRYPT
+	run_resetprops();
 	set_selinux_enforcing(false,false); // set back kernel permissive
+#endif
 #endif
 
 	if (data_mount_ready) {
@@ -606,7 +648,11 @@ static void decrypted_work(void)
 	pr_info("Fs key input for decrypt! Call encrypted_work now..");
 	// set kernel permissive
 	set_selinux_enforcing(false,false);
+#ifdef USE_ENCRYPTED
+#ifdef RUN_ENCRYPTED_LATE
 	encrypted_work();
+#endif
+#endif
 	// unset kernel permissive
 	set_selinux_enforcing(true,false);
 
@@ -616,10 +662,16 @@ static void decrypted_work(void)
 			msleep(1000);
 		pr_info("fs decrypted!");
 	}
-
 	// Wait for RCU grace period to end for the files to sync
 	sync_fs();
 	msleep(100);
+
+#ifdef USE_RESET_PROPS
+#ifdef RUN_RESET_PROPS_AFTER_DECRYPT
+	// run resetprops here, otherwise it's not set
+	run_resetprops();
+#endif
+#endif
 
 //	overlay_system_etc();
 }
@@ -699,11 +751,13 @@ static void userland_worker(struct work_struct *work)
 	}
 	pr_info("%s worker extern_state inited...\n",__func__);
 
-#ifndef USE_DECRYPTED
+#ifdef USE_ENCRYPTED
+#ifndef RUN_ENCRYPTED_LATE
 	// set permissive while setting up properties and stuff..
 	set_selinux_enforcing(false,false);
 	encrypted_work();
 	set_selinux_enforcing(true,false);
+#endif
 #endif
 
 #ifdef USE_DECRYPTED
