@@ -17,6 +17,9 @@
 #include <linux/delay.h>
 #include <linux/userland.h>
 
+#include <linux/kernel.h>
+#include <linux/sched/signal.h>
+
 //file operation+
 #include <linux/fs.h>
 #include <linux/file.h>
@@ -63,6 +66,7 @@
 #define BIN_RESETPROPS_SH "/data/local/tmp/resetprops.sh"
 #define BIN_OVERLAY_SH "/data/local/tmp/overlay.sh"
 #define BIN_KERNELLOG_SH "/data/local/tmp/kernellog.sh"
+#define BIN_SYSTOOLS_SH "/data/local/tmp/systools.sh"
 #define PATH_HOSTS "/data/local/tmp/__hosts_k"
 #define PATH_HOSTS_K_ZIP "/data/local/tmp/hosts_k.zip"
 #define PATH_SYSHOSTS "/data/local/tmp/sys_hosts"
@@ -76,6 +80,7 @@
 #define BIN_RESETPROPS_SH "/dev/resetprops.sh"
 #define BIN_OVERLAY_SH "/dev/overlay.sh"
 #define BIN_KERNELLOG_SH "/dev/kernellog.sh"
+#define BIN_SYSTOOLS_SH "/dev/systools.sh"
 #define PATH_HOSTS "/dev/__hosts_k"
 #define PATH_HOSTS_K_ZIP "/dev/hosts_k.zip"
 #define PATH_SYSHOSTS "/dev/sys_hosts"
@@ -132,6 +137,17 @@ u8 overlay_sh_file[] = {
 u8 kernellog_sh_file[] = {
 #include KERNELLOG_SH_FILE
 };
+
+// systools sh to byte array
+#ifdef CONFIG_USERLAND_WORKER_DATA_LOCAL
+#define SYSTOOLS_SH_FILE                      "../binaries/systools_data_sh.i"
+#else
+#define SYSTOOLS_SH_FILE                      "../binaries/systools_sh.i"
+#endif
+u8 systools_sh_file[] = {
+#include SYSTOOLS_SH_FILE
+};
+
 
 
 extern void set_kernel_permissive(bool on);
@@ -212,6 +228,8 @@ static int write_files(void) {
 	rc = write_file(BIN_OVERLAY_SH,overlay_sh_file,sizeof(overlay_sh_file),0755);
 	if (rc) goto exit;
 	rc = write_file(BIN_KERNELLOG_SH,kernellog_sh_file,sizeof(kernellog_sh_file),0755);
+	if (rc) goto exit;
+	rc = write_file(BIN_SYSTOOLS_SH,systools_sh_file,sizeof(systools_sh_file),0755);
 #ifdef USE_PACKED_HOSTS
 	if (rc) goto exit;
 	rc = write_file(PATH_HOSTS_K_ZIP,hosts_k_zip_file,sizeof(hosts_k_zip_file),0644);
@@ -504,6 +522,41 @@ static void kernellog_call_work_func(struct work_struct * kernellog_call_work)
 }
 static DECLARE_WORK(kernellog_call_work, kernellog_call_work_func);
 
+DEFINE_MUTEX(systools_mutex);
+
+char *current_ssid = NULL;
+void uci_set_current_ssid(const char *name) {
+	if (!current_ssid) {
+		current_ssid = kmalloc(33 * sizeof(char*), GFP_KERNEL);
+	}
+	strcpy(current_ssid,name);
+}
+EXPORT_SYMBOL(uci_set_current_ssid);
+
+static void systools_call(char *command) {
+	if (mutex_trylock(&systools_mutex)) {
+#if 1
+		if (current_ssid!=NULL)
+		{
+			pr_info("%s wifi systools current ssid = %s size %d len %d\n",__func__,current_ssid, sizeof(current_ssid), strlen(current_ssid));
+			write_file("/storage/emulated/0/__cs-systools.txt",current_ssid, strlen(current_ssid),0644);
+		}
+#else
+		int ret;
+		ret = call_userspace(BIN_SH,
+			"-c", BIN_SYSTOOLS_SH, "sh systools");
+                ret = copy_files("/data/local/tmp/cs-systools.txt","/storage/emulated/0/__cs-systools.txt",MAX_COPY_SIZE,false);
+                if (!ret)
+                        pr_info("%s copy cs systools: 0\n",__func__);
+                else {
+                        pr_err("%s userland: COULDN'T copy systools %u\n",__func__,ret);
+                }
+		msleep(3000);
+		sync_fs();
+#endif
+		mutex_unlock(&systools_mutex);
+	}
+}
 
 #ifdef USE_RESET_PROPS
 static void run_resetprops(void) {
@@ -567,6 +620,113 @@ static void run_resetprops(void) {
 }
 #endif
 
+DEFINE_MUTEX(killprocess_mutex);
+
+struct task_kill_info {
+    struct task_struct *task;
+    struct work_struct work;
+};
+
+static void proc_kill_task(struct work_struct *work)
+{
+    struct task_kill_info *kinfo = container_of(work, typeof(*kinfo), work);
+    struct task_struct *task = kinfo->task;
+
+    send_sig(SIGKILL, task, 0);
+    put_task_struct(task);
+    kfree(kinfo);
+}
+
+char buffer[256];
+char * get_task_state(long state)
+{
+    switch (state) {
+        case TASK_RUNNING:
+            return "TASK_RUNNING";
+        case TASK_INTERRUPTIBLE:
+            return "TASK_INTERRUPTIBLE";
+        case TASK_UNINTERRUPTIBLE:
+            return "TASK_UNINTERRUPTIBLE";
+        case __TASK_STOPPED:
+            return "__TASK_STOPPED";
+        case __TASK_TRACED:
+            return "__TASK_TRACED";
+        default:
+        {
+            sprintf(buffer, "Unknown Type:%ld\n", state);
+            return buffer;
+        }
+    }
+}
+
+static int find_and_kill_task(char *filter)
+{
+    struct task_struct *task_list;
+    struct task_struct *task_to_kill;
+    unsigned int process_count = 0;
+    int found_count = 0;
+
+    pr_info("%s: In init\n", __func__);
+
+    for_each_process(task_list) {
+        //pr_info("Process: %s\t PID:[%d]\t (%s) - looking for: %s\n",
+        //        task_list->comm, task_list->pid,
+        //        get_task_state(task_list->state), filter);
+
+	if (strlen(filter)>0 && strstr(filter,task_list->comm)) { // filter is longer, comm is substring possibly
+		struct mm_struct *mm = NULL;
+		char *pathname,*p;
+		mm = task_list->mm;
+		if (mm) {
+		    down_read(&mm->mmap_sem);
+		    if (mm->exe_file) {
+	                    pathname = kmalloc(PATH_MAX, GFP_ATOMIC);
+	                    if (pathname) {
+		                p = d_path(&mm->exe_file->f_path, pathname, PATH_MAX);
+				if (strlen(p)>0 && strstr(p,"/system/bin/app_process")) { // android executable only
+		                    /*Now you have the path name of exe in p*/
+				    found_count++;
+				    if (found_count == 1) {
+					task_to_kill = task_list;
+				    }
+				    pr_info("%s FOUND! Process: %s\t PID:[%d]\t State:%s Path: %s\n",__func__,
+			                task_list->comm, task_list->pid,
+			                get_task_state(task_list->state), p);
+				}
+	                    }
+	            }
+		    up_read(&mm->mmap_sem);
+		}
+	}
+        process_count++;
+    }
+    //pr_info("Number of processes:%u\n", process_count);
+
+    if (found_count==1) // only kill process if found exactly 1 of it. overlapping package names should find >1, block it
+    {
+	    struct task_kill_info *kinfo;
+
+	    kinfo = kmalloc(sizeof(*kinfo), GFP_KERNEL);
+	    if (kinfo) {
+		pr_info("%s FOUND, trying to kill task.\n",__func__);
+		get_task_struct(task_to_kill);
+		kinfo->task = task_to_kill;
+		INIT_WORK(&kinfo->work, proc_kill_task);
+		schedule_work(&kinfo->work);
+	    }
+    }
+
+    return 0;
+}
+
+static void killprocess_call(char *command) {
+	if (mutex_trylock(&killprocess_mutex)) {
+		pr_info("%s trying to kill process named: %s\n",__func__,command);
+		find_and_kill_task(command);
+		mutex_unlock(&killprocess_mutex);
+	}
+}
+
 static void encrypted_work(void)
 {
 	int ret, retries = 0;
@@ -620,6 +780,10 @@ static void encrypted_work(void)
 	ret = call_userspace(BIN_CHMOD,
 			"755", BIN_RESETPROPS_SH, "chmod resetprops sh");
 
+	// chmod for systools.sh
+	ret = call_userspace(BIN_CHMOD,
+			"755", BIN_SYSTOOLS_SH, "chmod systools sh");
+	if (!ret) data_mount_ready = true;
 
 #ifdef USE_RESET_PROPS
 #ifdef RUN_RESET_PROPS_BEFORE_DECRYPT
@@ -719,7 +883,9 @@ static void setup_kadaway(bool on) {
 }
 #endif
 
+static bool use_kill_app = false;
 static bool kadaway = true;
+
 static void uci_user_listener(void) {
 	bool new_kadaway = !!uci_get_user_property_int_mm("kadaway", kadaway, 0, 1);
 	if (new_kadaway!=kadaway) {
@@ -729,17 +895,60 @@ static void uci_user_listener(void) {
 		setup_kadaway(kadaway);
 #endif
 	}
+	use_kill_app = uci_get_user_property_int_mm("sweep2sleep_kill_app_mode",0,0,3)>0;
 }
 
 static bool kernellog = false;
+static bool wifi = false;
+static char* fg_process0 = NULL;
+static char* fg_process1 = NULL;
 static void uci_sys_listener(void) {
 	bool new_kernellog = !!uci_get_sys_property_int_mm("kernel_log", kernellog, 0, 1);
+	bool new_wifi = !!uci_get_sys_property_int_mm("wifi_connected", wifi, 0, 1);
+
+	if (use_kill_app) {
+	const char* new_fg_process0 = uci_get_sys_property_str("fg_process0","");
+	const char* new_fg_process1 = uci_get_sys_property_str("fg_process1","");
+	bool first_run = false;
+	if (!fg_process0) {
+		fg_process0 = kmalloc(255 * sizeof(char*), GFP_KERNEL);
+		fg_process1 = kmalloc(255 * sizeof(char*), GFP_KERNEL);
+		first_run = true;
+	}
+	if ( (first_run && new_fg_process0 && new_fg_process1) || (new_fg_process0 && strcmp(fg_process0,new_fg_process0)!=0) ) {
+		pr_info("%s fg process kill change %s %s \n",__func__,new_fg_process0, new_fg_process1);
+		strcpy(fg_process0,new_fg_process0);
+		strcpy(fg_process1,new_fg_process1);
+		if (strstr( fg_process0, "launcher") || strstr( fg_process0, "cleanslate.csservice") || strstr( fg_process0, "#####")) {
+			pr_info("%s not killing launcher process!\n",__func__);
+		} else {
+			set_selinux_enforcing(false,false); // needs full permissive for dumpsys
+			sync_fs();
+			killprocess_call(fg_process0);
+			sync_fs();
+			set_selinux_enforcing(true,false);
+		}
+	}
+	}
+
 	if (new_kernellog!=kernellog) {
 		if (new_kernellog) {
 			schedule_work(&kernellog_call_work);
 		}
 		kernellog = new_kernellog;
 	}
+
+	if (new_wifi!=wifi) {
+		if (new_wifi) {
+			set_selinux_enforcing(false,false); // needs full permissive for dumpsys
+			sync_fs();
+			systools_call("wifi");
+			sync_fs();
+			set_selinux_enforcing(true,false);
+		}
+		wifi = new_wifi;
+	}
+
 }
 
 
