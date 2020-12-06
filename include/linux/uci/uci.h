@@ -49,6 +49,10 @@
 #define UCI_SDCARD_RAMOOPS_DATA "/data/media/0/__console-ramoops-0.txt"
 #define UCI_SDCARD_RAMOOPS_END "__console-ramoops-0.txt"
 
+// systools
+#define UCI_SDCARD_SYSTOOLS "/storage/emulated/0/__cs-systools.txt"
+#define UCI_SDCARD_SYSTOOLS_END "__cs-systools.txt"
+
 #define UCI_PSTORE_FILE_0_END "console-ramoops"
 #define UCI_PSTORE_FILE_1_END "console-ramoops-0"
 
@@ -81,6 +85,9 @@ extern void uci_add_user_listener(void (*f)(void));
 
 /** write operations */
 extern void write_uci_out(char *message);
+
+/** set current sid, use this from WLAN drivers to be sent to CS app */
+extern void uci_set_current_ssid(const char *name);
 
 // 19811
 #define OP8PRO         1
