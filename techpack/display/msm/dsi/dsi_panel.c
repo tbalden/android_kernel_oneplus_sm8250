@@ -2658,6 +2658,15 @@ static int dsi_panel_parse_misc_features(struct dsi_panel *panel)
 	DSI_DEBUG("%s: ulps during suspend feature %s\n", __func__,
 		(panel->ulps_suspend_enabled ? "enabled" : "disabled"));
 
+#ifdef CONFIG_UCI
+	pr_info("%s checking for panel overrides %s\n",__func__, panel->name);
+	if (panel->name && ( strstr(panel->name,"ana6706") )) {
+		pr_info("%s panel override found, setting ulps and suspend ulps from %d %d to 1 1\n",__func__,panel->ulps_feature_enabled, panel->ulps_suspend_enabled);
+		panel->ulps_feature_enabled = true;
+		panel->ulps_suspend_enabled = true;
+	}
+#endif
+
 	panel->te_using_watchdog_timer = utils->read_bool(utils->data,
 					"qcom,mdss-dsi-te-using-wd");
 
