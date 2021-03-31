@@ -81,3 +81,6 @@ obj-$(CONFIG_UCI)  += uci/
 obj-$(CONFIG_UCI_NOTIFICATIONS)  += notification/
 obj-y  += inputfilter/
 
+#+bug 550748,zhanghaibin1@wt,20200509,Add hardware_info
+obj-y += hardware_info.o
+#-bug 550748,zhanghaibin1@wt,20200509,Add hardware_info
