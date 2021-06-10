@@ -1864,8 +1864,6 @@ static int lpm_probe(struct platform_device *pdev)
 		goto failed;
 	}
 
-	//set_update_ipi_history_callback(update_ipi_history);
-
 	/* Add lpm_debug to Minidump*/
 	strlcpy(md_entry.name, "KLPMDEBUG", sizeof(md_entry.name));
 	md_entry.virt_addr = (uintptr_t)lpm_debug;
