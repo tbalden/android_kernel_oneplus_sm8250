@@ -5198,9 +5198,9 @@ int register_common_touch_device(struct touchpanel_data *pdata)
 	#endif
 	ts->tp_delta_print_notif.notifier_call = tp_delta_print_notifier_callback;
 	#ifndef CONFIG_TOUCHPANEL_GOODIX_GT9886
-	ret = register_tp_delta_print_notifier(&ts->tp_delta_print_notif);/*commented to make compilation successful for Android_R */
-	if (ret)
-		TPD_INFO("unable to register tp_delta_print_notifier:%d\n", ret);
+//	ret = register_tp_delta_print_notifier(&ts->tp_delta_print_notif);/*commented to make compilation successful for Android_R */
+//	if (ret)
+//		TPD_INFO("unable to register tp_delta_print_notifier:%d\n", ret);
 	#endif
 	//step15 : workqueue create(speedup_resume)
 	ts->speedup_resume_wq = create_singlethread_workqueue("speedup_resume_wq");
