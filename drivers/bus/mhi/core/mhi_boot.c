@@ -18,7 +18,7 @@
 #include "mhi_internal.h"
 
 static void mhi_process_sfr(struct mhi_controller *mhi_cntrl,
-	struct file_info *info, char *buf, size_t len)
+	struct file_info *info)
 {
 	struct mhi_buf *mhi_buf = mhi_cntrl->rddm_image->mhi_buf;
 	u8 *sfr_buf, *file_offset = info->file_offset;
@@ -59,10 +59,6 @@ static void mhi_process_sfr(struct mhi_controller *mhi_cntrl,
 
 	/* force sfr string to log in kernel msg */
 	MHI_ERR("%s\n", sfr_buf);
-
-	/* return sfr string for subsystem crash reason */
-	if (info->file_size < SFR_BUF_SIZE)
-		strlcpy(buf, sfr_buf, info->file_size);
 err:
 	kfree(sfr_buf);
 }
@@ -102,7 +98,7 @@ static int mhi_find_next_file_offset(struct mhi_controller *mhi_cntrl,
 	return 0;
 }
 
-void mhi_dump_sfr(struct mhi_controller *mhi_cntrl, char *buf, size_t len)
+void mhi_dump_sfr(struct mhi_controller *mhi_cntrl)
 {
 	struct mhi_buf *mhi_buf = mhi_cntrl->rddm_image->mhi_buf;
 	struct rddm_header *rddm_header =
@@ -110,11 +106,6 @@ void mhi_dump_sfr(struct mhi_controller *mhi_cntrl, char *buf, size_t len)
 	struct rddm_table_info *table_info;
 	struct file_info info = {0};
 	u32 table_size, n;
-
-	if (buf == NULL || len == 0) {
-		MHI_ERR("invalid sfr buf\n");
-		return;
-	}
 
 	if (rddm_header->header_size > sizeof(*rddm_header) ||
 			rddm_header->header_size < 8) {
@@ -136,7 +127,7 @@ void mhi_dump_sfr(struct mhi_controller *mhi_cntrl, char *buf, size_t len)
 
 		if (!strcmp(table_info->file_name, "Q6-SFR.bin")) {
 			info.file_size = table_info->size;
-			mhi_process_sfr(mhi_cntrl, &info, buf, len);
+			mhi_process_sfr(mhi_cntrl, &info);
 			return;
 		}
 
@@ -583,7 +574,7 @@ void mhi_fw_load_handler(struct mhi_controller *mhi_cntrl)
 			"No firmware image defined or !sbl_size || !seg_len\n");
 		return;
 	}
-	MHI_LOG("loading firmware fw_name=%s\n", fw_name);
+
 	ret = request_firmware(&firmware, fw_name, mhi_cntrl->dev);
 	if (ret) {
 		if (!mhi_cntrl->fw_image_fallback) {
@@ -621,12 +612,9 @@ void mhi_fw_load_handler(struct mhi_controller *mhi_cntrl)
 	ret = mhi_fw_load_sbl(mhi_cntrl, dma_addr, size);
 	mhi_free_coherent(mhi_cntrl, size, buf, dma_addr);
 
-	if (!mhi_cntrl->fbc_download || ret || mhi_cntrl->ee == MHI_EE_EDL)
-		release_firmware(firmware);
-
 	/* error or in edl, we're done */
 	if (ret || mhi_cntrl->ee == MHI_EE_EDL)
-		return;
+		goto release_fw;
 
 	write_lock_irq(&mhi_cntrl->pm_lock);
 	mhi_cntrl->dev_state = MHI_STATE_RESET;
@@ -641,7 +629,7 @@ void mhi_fw_load_handler(struct mhi_controller *mhi_cntrl)
 					   firmware->size);
 		if (ret) {
 			MHI_CNTRL_ERR("Error alloc size:%zu\n", firmware->size);
-			goto error_alloc_fw_table;
+			goto release_fw;
 		}
 
 		MHI_CNTRL_LOG("Copying firmware image into vector table\n");
@@ -660,7 +648,7 @@ fw_load_ee_pthru:
 			TO_MHI_EXEC_STR(mhi_cntrl->ee), ret);
 
 	if (!mhi_cntrl->fbc_download)
-		return;
+		goto release_fw;
 
 	if (ret) {
 		MHI_CNTRL_ERR("Did not transition to READY state\n");
@@ -675,6 +663,8 @@ fw_load_ee_pthru:
 
 	if (!ret || MHI_PM_IN_ERROR_STATE(mhi_cntrl->pm_state)) {
 		MHI_CNTRL_ERR("MHI did not enter BHIE\n");
+		mhi_cntrl->status_cb(mhi_cntrl, mhi_cntrl->priv_data,
+				     MHI_CB_BOOTUP_TIMEOUT);
 		goto error_read;
 	}
 
@@ -683,6 +673,11 @@ fw_load_ee_pthru:
 	ret = mhi_fw_load_amss(mhi_cntrl,
 			       /* last entry is vec table */
 			       &image_info->mhi_buf[image_info->entries - 1]);
+
+	if (ret) {
+		mhi_cntrl->status_cb(mhi_cntrl, mhi_cntrl->priv_data,
+				     MHI_CB_BOOTUP_TIMEOUT);
+	}
 
 	MHI_CNTRL_LOG("amss fw_load ret:%d\n", ret);
 
@@ -693,7 +688,7 @@ fw_load_ee_pthru:
 error_read:
 	mhi_free_bhie_table(mhi_cntrl, &mhi_cntrl->fbc_image);
 
-error_alloc_fw_table:
+release_fw:
 	release_firmware(firmware);
 }
 

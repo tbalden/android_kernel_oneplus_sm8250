@@ -37,10 +37,10 @@
 #include <linux/rwsem.h>
 #include <linux/uio.h>
 #include <linux/atomic.h>
-#ifdef CONFIG_CGROUP_IOLIMIT
-#include <linux/iolimit_cgroup.h>
-#endif
 #include <linux/prefetch.h>
+#if defined(OPLUS_FEATURE_IOMONITOR) && defined(CONFIG_IOMONITOR)
+#include <linux/iomonitor/iomonitor.h>
+#endif /*OPLUS_FEATURE_IOMONITOR*/
 
 /*
  * How many user pages to map in one call to get_user_pages().  This determines
@@ -878,6 +878,9 @@ submit_page_section(struct dio *dio, struct dio_submit *sdio, struct page *page,
 		 * Read accounting is performed in submit_bio()
 		 */
 		task_io_account_write(len);
+#if defined(OPLUS_FEATURE_IOMONITOR) && defined(CONFIG_IOMONITOR)
+		iomonitor_update_rw_stats(DIO_WRITE, NULL, len);
+#endif /*OPLUS_FEATURE_IOMONITOR*/
 	}
 
 	/*
@@ -1007,15 +1010,6 @@ static int do_direct_IO(struct dio *dio, struct dio_submit *sdio,
 			unsigned this_chunk_bytes;	/* # of bytes mapped */
 			unsigned this_chunk_blocks;	/* # of blocks */
 			unsigned u;
-
-#ifdef CONFIG_CGROUP_IOLIMIT
-			if (iolimit_enable) {
-				if (dio->op == REQ_OP_WRITE)
-					io_write_bandwidth_control(PAGE_SIZE);
-				else
-					io_read_bandwidth_control(PAGE_SIZE);
-			}
-#endif
 
 			if (sdio->blocks_available == 0) {
 				/*

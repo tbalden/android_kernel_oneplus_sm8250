@@ -23,8 +23,8 @@
 #include <trace/events/sched.h>
 #include <linux/sched/sysctl.h>
 
-#ifdef CONFIG_HUNG_TASK_ENHANCE
-#include <linux/oem/hung_task_enhance.h>
+#ifdef CONFIG_OPLUS_FEATURE_HUNG_TASK_ENHANCE
+#include <soc/oplus/system/hung_task_enhance.h>
 #endif
 
 /*
@@ -96,7 +96,7 @@ static struct notifier_block panic_block = {
 	.notifier_call = hung_task_panic,
 };
 
-#ifndef CONFIG_HUNG_TASK_ENHANCE
+#ifndef CONFIG_OPLUS_FEATURE_HUNG_TASK_ENHANCE
 static void check_hung_task(struct task_struct *t, unsigned long timeout)
 {
 	unsigned long switch_count = t->nvcsw + t->nivcsw;
@@ -189,7 +189,7 @@ static void check_hung_uninterruptible_tasks(unsigned long timeout)
 	unsigned long last_break = jiffies;
 	struct task_struct *g, *t;
 
-#ifdef CONFIG_HUNG_TASK_ENHANCE
+#if defined(CONFIG_OPLUS_FEATURE_HUNG_TASK_ENHANCE) && defined(CONFIG_OPLUS_FEATURE_DEATH_HEALER)
 	unsigned int iowait_count = 0;
 #endif
 
@@ -210,7 +210,7 @@ static void check_hung_uninterruptible_tasks(unsigned long timeout)
 				goto unlock;
 			last_break = jiffies;
 		}
-#ifdef CONFIG_HUNG_TASK_ENHANCE
+#if defined(CONFIG_OPLUS_FEATURE_HUNG_TASK_ENHANCE) && defined(CONFIG_OPLUS_FEATURE_DEATH_HEALER)
 		io_check_hung_detection(t, timeout, &iowait_count, &hung_task_show_lock, &hung_task_call_panic);
 #else
 		/* use "==" to skip the TASK_KILLABLE tasks waiting on NFS */
@@ -222,7 +222,7 @@ static void check_hung_uninterruptible_tasks(unsigned long timeout)
 #endif
 	}
  unlock:
-#ifdef CONFIG_HUNG_TASK_ENHANCE
+#if defined(CONFIG_OPLUS_FEATURE_HUNG_TASK_ENHANCE) && defined(CONFIG_OPLUS_FEATURE_DEATH_HEALER)
 	io_block_panic(&iowait_count, sysctl_hung_task_maxiowait_count);
 #endif
 	rcu_read_unlock();

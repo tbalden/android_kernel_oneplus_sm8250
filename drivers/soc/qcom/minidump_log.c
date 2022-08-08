@@ -18,6 +18,9 @@
 #include <linux/mm.h>
 #include <linux/sched/task.h>
 #include <linux/vmalloc.h>
+#ifdef CONFIG_OPLUS_FEATURE_QCOM_MINIDUMP_ENHANCE
+#include <soc/oplus/system/qcom_minidump_enhance.h>
+#endif
 
 static bool is_vmap_stack __read_mostly;
 
@@ -41,21 +44,22 @@ static DEFINE_PER_CPU_SHARED_ALIGNED(struct md_stack_cpu_data, md_stack_data);
 
 static void __init register_log_buf(void)
 {
-	char **log_bufp;
-	uint32_t *log_buf_lenp;
+	char *log_bufp;
+	uint32_t log_buf_len;
 	struct md_region md_entry;
 
-	log_bufp = (char **)kallsyms_lookup_name("log_buf");
-	log_buf_lenp = (uint32_t *)kallsyms_lookup_name("log_buf_len");
-	if (!log_bufp || !log_buf_lenp) {
-		pr_err("Unable to find log_buf by kallsyms!\n");
+	log_bufp = log_buf_addr_get();
+	log_buf_len = log_buf_len_get();
+
+	if (!log_bufp || !log_buf_len) {
+		pr_err("Unable to locate log_buf!\n");
 		return;
 	}
 	/*Register logbuf to minidump, first idx would be from bss section */
 	strlcpy(md_entry.name, "KLOGBUF", sizeof(md_entry.name));
-	md_entry.virt_addr = (uintptr_t) (*log_bufp);
-	md_entry.phys_addr = virt_to_phys(*log_bufp);
-	md_entry.size = *log_buf_lenp;
+	md_entry.virt_addr = (uintptr_t) log_bufp;
+	md_entry.phys_addr = virt_to_phys(log_bufp);
+	md_entry.size = log_buf_len;
 	md_entry.id = MINIDUMP_DEFAULT_ID;
 	if (msm_minidump_add_region(&md_entry) < 0)
 		pr_err("Failed to add logbuf in Minidump\n");
@@ -364,6 +368,9 @@ static int __init msm_minidump_log_init(void)
 	register_current_stack();
 #endif
 	register_log_buf();
+#ifdef CONFIG_OPLUS_FEATURE_QCOM_MINIDUMP_ENHANCE
+	register_cpu_contex();
+#endif /* CONFIG_OPLUS_FEATURE_QCOM_MINIDUMP_ENHANCE */
 	return 0;
 }
 subsys_initcall(msm_minidump_log_init);

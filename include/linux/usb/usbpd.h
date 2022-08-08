@@ -14,7 +14,6 @@ struct device;
 /* Standard IDs */
 #define USBPD_SID			0xff00
 
-#define OP_SVID				0x22d9
 /* Structured VDM Command Type */
 enum usbpd_svdm_cmd_type {
 	SVDM_CMD_TYPE_INITIATOR,

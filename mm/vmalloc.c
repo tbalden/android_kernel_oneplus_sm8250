@@ -32,12 +32,18 @@
 #include <linux/llist.h>
 #include <linux/bitops.h>
 #include <linux/rbtree_augmented.h>
+#include <linux/overflow.h>
 
 #include <linux/uaccess.h>
 #include <asm/tlbflush.h>
 #include <asm/shmparam.h>
 
 #include "internal.h"
+#if defined(OPLUS_FEATURE_MEMLEAK_DETECT) && defined(CONFIG_VMALLOC_DEBUG)
+/* used for vmalloc_debug */
+static unsigned int save_vmalloc_stack(unsigned long flags, struct vmap_area *va);
+static void dec_vmalloc_stat(struct vmap_area *va);
+#endif
 
 struct vfree_deferred {
 	struct llist_head list;
@@ -1265,6 +1271,7 @@ static bool __purge_vmap_area_lazy(unsigned long start, unsigned long end)
 	struct llist_node *valist;
 	struct vmap_area *va;
 	struct vmap_area *n_va;
+	unsigned long flush_all_threshold = VMALLOC_END - VMALLOC_START;
 
 	lockdep_assert_held(&vmap_purge_lock);
 
@@ -1283,7 +1290,10 @@ static bool __purge_vmap_area_lazy(unsigned long start, unsigned long end)
 			end = va->va_end;
 	}
 
-	flush_tlb_kernel_range(start, end);
+	if (end - start <= flush_all_threshold)
+		flush_tlb_kernel_range(start, end);
+	else
+		flush_tlb_all();
 	resched_threshold = lazy_max_pages() << 1;
 
 	spin_lock(&vmap_area_lock);
@@ -2039,11 +2049,19 @@ EXPORT_SYMBOL_GPL(map_vm_area);
 static void setup_vmalloc_vm(struct vm_struct *vm, struct vmap_area *va,
 			      unsigned long flags, const void *caller)
 {
+#if defined(OPLUS_FEATURE_MEMLEAK_DETECT) && defined(CONFIG_VMALLOC_DEBUG)
+	/* save vmalloc called stack. */
+	unsigned int handle = save_vmalloc_stack(flags, va);
+#endif
 	spin_lock(&vmap_area_lock);
 	vm->flags = flags;
 	vm->addr = (void *)va->va_start;
 	vm->size = va->va_end - va->va_start;
 	vm->caller = caller;
+#if defined(OPLUS_FEATURE_MEMLEAK_DETECT) && defined(CONFIG_VMALLOC_DEBUG)
+	/* save stach hash*/
+	vm->hash = handle;
+#endif
 	va->vm = vm;
 	va->flags |= VM_VM_AREA;
 	spin_unlock(&vmap_area_lock);
@@ -2131,6 +2149,7 @@ struct vm_struct *get_vm_area(unsigned long size, unsigned long flags)
 				  __builtin_return_address(0));
 #endif
 }
+EXPORT_SYMBOL_GPL(get_vm_area);
 
 struct vm_struct *get_vm_area_caller(unsigned long size, unsigned long flags,
 				const void *caller)
@@ -2167,6 +2186,11 @@ static struct vm_struct *__remove_vm_area(struct vmap_area *va)
 {
 	struct vm_struct *vm = va->vm;
 
+#if defined(OPLUS_FEATURE_MEMLEAK_DETECT) && defined(CONFIG_VMALLOC_DEBUG)
+	/* update the count while
+	 * vfree. */
+	dec_vmalloc_stat(va);
+#endif
 	spin_lock(&vmap_area_lock);
 	va->vm = NULL;
 	va->flags &= ~VM_VM_AREA;
@@ -2371,7 +2395,6 @@ static void *__vmalloc_area_node(struct vm_struct *area, gfp_t gfp_mask,
 	nr_pages = get_vm_area_size(area) >> PAGE_SHIFT;
 	array_size = (nr_pages * sizeof(struct page *));
 
-	area->nr_pages = nr_pages;
 	/* Please note that the recursion is strictly bounded. */
 	if (array_size > PAGE_SIZE) {
 		pages = __vmalloc_node(array_size, 1, nested_gfp|highmem_mask,
@@ -2379,12 +2402,15 @@ static void *__vmalloc_area_node(struct vm_struct *area, gfp_t gfp_mask,
 	} else {
 		pages = kmalloc_node(array_size, nested_gfp, node);
 	}
-	area->pages = pages;
-	if (!area->pages) {
+
+	if (!pages) {
 		remove_vm_area(area->addr);
 		kfree(area);
 		return NULL;
 	}
+
+	area->pages = pages;
+	area->nr_pages = nr_pages;
 
 	for (i = 0; i < area->nr_pages; i++) {
 		struct page *page;
@@ -2460,7 +2486,7 @@ void *__vmalloc_node_range(unsigned long size, unsigned long align,
 	 * First make sure the mappings are removed from all page-tables
 	 * before they are freed.
 	 */
-	vmalloc_sync_all();
+	vmalloc_sync_unmappings();
 
 	/*
 	 * In this function, newly allocated vm_struct has VM_UNINITIALIZED
@@ -2936,6 +2962,7 @@ finished:
  *	@vma:		vma to cover
  *	@uaddr:		target user address to start at
  *	@kaddr:		virtual address of vmalloc kernel memory
+ *	@pgoff:		offset from @kaddr to start at
  *	@size:		size of map area
  *
  *	Returns:	0 for success, -Exxx on failure
@@ -2948,9 +2975,15 @@ finished:
  *	Similar to remap_pfn_range() (see mm/memory.c)
  */
 int remap_vmalloc_range_partial(struct vm_area_struct *vma, unsigned long uaddr,
-				void *kaddr, unsigned long size)
+				void *kaddr, unsigned long pgoff,
+				unsigned long size)
 {
 	struct vm_struct *area;
+	unsigned long off;
+	unsigned long end_index;
+
+	if (check_shl_overflow(pgoff, PAGE_SHIFT, &off))
+		return -EINVAL;
 
 	size = PAGE_ALIGN(size);
 
@@ -2964,8 +2997,10 @@ int remap_vmalloc_range_partial(struct vm_area_struct *vma, unsigned long uaddr,
 	if (!(area->flags & VM_USERMAP))
 		return -EINVAL;
 
-	if (kaddr + size > area->addr + get_vm_area_size(area))
+	if (check_add_overflow(size, off, &end_index) ||
+	    end_index > get_vm_area_size(area))
 		return -EINVAL;
+	kaddr += off;
 
 	do {
 		struct page *page = vmalloc_to_page(kaddr);
@@ -3004,7 +3039,7 @@ int remap_vmalloc_range(struct vm_area_struct *vma, void *addr,
 						unsigned long pgoff)
 {
 	return remap_vmalloc_range_partial(vma, vma->vm_start,
-					   addr + (pgoff << PAGE_SHIFT),
+					   addr, pgoff,
 					   vma->vm_end - vma->vm_start);
 }
 EXPORT_SYMBOL(remap_vmalloc_range);
@@ -3016,10 +3051,13 @@ EXPORT_SYMBOL(remap_vmalloc_range);
  * The purpose of this function is to make sure the vmalloc area
  * mappings are identical in all page-tables in the system.
  */
-void __weak vmalloc_sync_all(void)
+void __weak vmalloc_sync_mappings(void)
 {
 }
 
+void __weak vmalloc_sync_unmappings(void)
+{
+}
 
 static int f(pte_t *pte, pgtable_t table, unsigned long addr, void *data)
 {
@@ -3446,7 +3484,11 @@ static int s_show(struct seq_file *m, void *p)
 	seq_printf(m, "0x%pK-0x%pK %7ld",
 		v->addr, v->addr + v->size, v->size);
 
-	if (v->caller)
+#ifdef OPLUS_FEATURE_PERFORMANCE
+    if (v->caller && (strcmp(current->comm, "android.bg") != 0))
+#else
+    if (v->caller)
+#endif
 		seq_printf(m, " %pS", v->caller);
 
 	if (v->nr_pages)
@@ -3496,3 +3538,16 @@ module_init(proc_vmalloc_init);
 
 #endif
 
+#ifdef CONFIG_VMALLOC_DEBUG
+#ifdef OPLUS_FEATURE_MEMLEAK_DETECT
+/* vmalloc debug used */
+#include "malloc_track/vmalloc_track.c"
+#else
+int __init __weak create_vmalloc_debug(struct proc_dir_entry *parent)
+{
+	pr_warn("OPLUS_FEATURE_MEMLEAK_DETECT is off.\n");
+	return 0;
+}
+EXPORT_SYMBOL(create_vmalloc_debug);
+#endif
+#endif

@@ -107,7 +107,7 @@ kgsl_pool_size(struct kgsl_page_pool *kgsl_pool)
 }
 
 /* Returns the number of pages in all kgsl page pools */
-int kgsl_pool_size_total(void)
+static int kgsl_pool_size_total(void)
 {
 	int i;
 	int total = 0;
@@ -257,7 +257,8 @@ static int kgsl_pool_get_retry_order(unsigned int order)
  * Return total page count on success and negative value on failure
  */
 int kgsl_pool_alloc_page(int *page_size, struct page **pages,
-			unsigned int pages_len, unsigned int *align)
+			unsigned int pages_len, unsigned int *align,
+			struct kgsl_memdesc *memdesc)
 {
 	int j;
 	int pcount = 0;
@@ -317,6 +318,7 @@ int kgsl_pool_alloc_page(int *page_size, struct page **pages,
 	if (page == NULL) {
 		gfp_t gfp_mask = kgsl_gfp_mask(order);
 
+#ifndef OPLUS_FEATURE_SPECIALOPT
 		/* Only allocate non-reserved memory for certain pools */
 		if (!pool->allocation_allowed && pool_idx > 0) {
 			size = PAGE_SIZE <<
@@ -325,6 +327,16 @@ int kgsl_pool_alloc_page(int *page_size, struct page **pages,
 		}
 
 		page = alloc_pages(gfp_mask, order);
+#else
+		page = alloc_pages(gfp_mask, order);
+
+		/* Only allocate non-reserved memory for certain pools */
+		if (!page &&!pool->allocation_allowed && pool_idx > 0) {
+			size = PAGE_SIZE <<
+					kgsl_pools[pool_idx-1].pool_order;
+			goto eagain;
+		}
+#endif
 
 		if (!page) {
 			if (pool_idx > 0) {
@@ -352,7 +364,7 @@ done:
 
 eagain:
 	*page_size = kgsl_get_page_size(size,
-			ilog2(size));
+			ilog2(size), memdesc);
 	*align = ilog2(*page_size);
 	return -EAGAIN;
 }
@@ -539,11 +551,13 @@ static void kgsl_of_get_mempools(struct device_node *parent)
 	}
 }
 
-void kgsl_init_page_pools(struct platform_device *pdev)
+void kgsl_init_page_pools(struct kgsl_device *device)
 {
+	if (device->flags & KGSL_FLAG_USE_SHMEM)
+		return;
 
 	/* Get GPU mempools data and configure pools */
-	kgsl_of_get_mempools(pdev->dev.of_node);
+	kgsl_of_get_mempools(device->pdev->dev.of_node);
 
 	/* Reserve the appropriate number of pages for each pool */
 	kgsl_pool_reserve_pages();

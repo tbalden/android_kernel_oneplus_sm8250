@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2018-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2018-2020, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/dma-direction.h>
@@ -220,7 +220,7 @@ static bool msm_cvp_check_for_inst_overload(struct msm_cvp_core *core)
 		overload = true;
 	return overload;
 }
-
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
 static int __init_session_queue(struct msm_cvp_inst *inst)
 {
 	spin_lock_init(&inst->session_queue.lock);
@@ -246,6 +246,17 @@ static void __init_fence_queue(struct msm_cvp_inst *inst)
 	inst->session_queue_fence.state = QUEUE_ACTIVE;
 }
 
+#else
+static int _init_session_queue(struct msm_cvp_inst *inst)
+{
+	spin_lock_init(&inst->session_queue.lock);
+	INIT_LIST_HEAD(&inst->session_queue.msgs);
+	inst->session_queue.msg_count = 0;
+	init_waitqueue_head(&inst->session_queue.wq);
+	inst->session_queue.state = QUEUE_ACTIVE;
+	return 0;
+}
+#endif
 static void _deinit_session_queue(struct msm_cvp_inst *inst)
 {
 	struct cvp_session_msg *msg, *tmpmsg;
@@ -306,7 +317,11 @@ void *msm_cvp_open(int core_id, int session_type)
 	pr_info(CVP_DBG_TAG "Opening cvp instance: %pK\n", "info", inst);
 	mutex_init(&inst->sync_lock);
 	mutex_init(&inst->lock);
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+	mutex_init(&inst->fence_lock);
+#endif
 	spin_lock_init(&inst->event_handler.lock);
+
 
 	INIT_MSM_CVP_LIST(&inst->persistbufs);
 	INIT_MSM_CVP_LIST(&inst->cvpcpubufs);
@@ -328,6 +343,9 @@ void *msm_cvp_open(int core_id, int session_type)
 	inst->clk_data.sys_cache_bw = 0;
 	inst->clk_data.bitrate = 0;
 	inst->clk_data.core_id = 0;
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+	inst->deprecate_bitmask = 0;
+#endif
 
 	for (i = SESSION_MSG_INDEX(SESSION_MSG_START);
 		i <= SESSION_MSG_INDEX(SESSION_MSG_END); i++) {
@@ -339,10 +357,13 @@ void *msm_cvp_open(int core_id, int session_type)
 	mutex_lock(&core->lock);
 	list_add_tail(&inst->list, &core->instances);
 	mutex_unlock(&core->lock);
-
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
 	__init_fence_queue(inst);
 
 	rc = __init_session_queue(inst);
+#else
+	rc = _init_session_queue(inst);
+#endif
 	if (rc)
 		goto fail_init;
 
@@ -364,6 +385,9 @@ fail_init:
 	mutex_unlock(&core->lock);
 	mutex_destroy(&inst->sync_lock);
 	mutex_destroy(&inst->lock);
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+	mutex_destroy(&inst->fence_lock);
+#endif
 
 	DEINIT_MSM_CVP_LIST(&inst->persistbufs);
 	DEINIT_MSM_CVP_LIST(&inst->cvpcpubufs);
@@ -381,16 +405,41 @@ EXPORT_SYMBOL(msm_cvp_open);
 
 static void msm_cvp_cleanup_instance(struct msm_cvp_inst *inst)
 {
+	bool empty;
+	int max_retries;
+
 	if (!inst) {
 		dprintk(CVP_ERR, "%s: invalid params\n", __func__);
 		return;
 	}
 
+	max_retries =  inst->core->resources.msm_cvp_hw_rsp_timeout >> 1;
+
+wait:
+	mutex_lock(&inst->cvpdspbufs.lock);
+	empty = list_empty(&inst->cvpdspbufs.list);
+	if (!empty && max_retries > 0) {
+		mutex_unlock(&inst->cvpdspbufs.lock);
+		usleep_range(1000, 2000);
+		max_retries--;
+		goto wait;
+	}
+	mutex_unlock(&inst->cvpdspbufs.lock);
+
+	dprintk(CVP_DBG, "empty %d, retry %d\n", (int)empty,
+	(inst->core->resources.msm_cvp_hw_rsp_timeout >> 1) - max_retries);
+	if (!empty) {
+		dprintk(CVP_WARN,
+			"Failed to process frames before session close\n");
+	}
+
 	if (cvp_comm_release_persist_buffers(inst))
 		dprintk(CVP_ERR,
 			"Failed to release persist buffers\n");
-
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
 	msm_cvp_session_queue_stop(inst);
+#endif
+	dprintk(CVP_DBG, "Done cvp cleanup instance\n");
 }
 
 int msm_cvp_destroy(struct msm_cvp_inst *inst)
@@ -418,6 +467,9 @@ int msm_cvp_destroy(struct msm_cvp_inst *inst)
 
 	mutex_destroy(&inst->sync_lock);
 	mutex_destroy(&inst->lock);
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+	mutex_destroy(&inst->fence_lock);
+#endif
 
 	msm_cvp_debugfs_deinit_inst(inst);
 	_deinit_session_queue(inst);

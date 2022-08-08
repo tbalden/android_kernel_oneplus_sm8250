@@ -151,6 +151,10 @@ extern int proc_pid_status(struct seq_file *, struct pid_namespace *,
 			   struct pid *, struct task_struct *);
 extern int proc_pid_statm(struct seq_file *, struct pid_namespace *,
 			  struct pid *, struct task_struct *);
+#ifdef OPLUS_FEATURE_PERFORMANCE
+extern int proc_pid_statm_as(struct seq_file *m, struct pid_namespace *ns,
+			     struct pid *pid, struct task_struct *task);
+#endif /* OPLUS_FEATURE_PERFORMANCE */
 
 /*
  * base.c
@@ -314,9 +318,3 @@ extern unsigned long task_statm(struct mm_struct *,
 				unsigned long *, unsigned long *,
 				unsigned long *, unsigned long *);
 extern void task_mem(struct seq_file *, struct mm_struct *);
-
-/*
- * trace lost ram
- */
-extern int read_fastrpc_usage(void);
-extern int kgsl_pool_size_total(void);

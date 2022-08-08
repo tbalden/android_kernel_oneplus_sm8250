@@ -1145,6 +1145,7 @@ TRACE_EVENT(sched_cpu_util,
 		__field(int,		isolated)
 		__field(int,		reserved)
 		__field(int,		high_irq_load)
+		__field(unsigned int,	nr_rtg_high_prio_tasks)
 	),
 
 	TP_fast_assign(
@@ -1161,15 +1162,100 @@ TRACE_EVENT(sched_cpu_util,
 		__entry->isolated           = cpu_isolated(cpu);
 		__entry->reserved           = is_reserved(cpu);
 		__entry->high_irq_load      = sched_cpu_high_irqload(cpu);
+		__entry->nr_rtg_high_prio_tasks = walt_nr_rtg_high_prio(cpu);
 	),
 
-	TP_printk("cpu=%d nr_running=%d cpu_util=%ld cpu_util_cum=%ld capacity_curr=%u capacity=%u capacity_orig=%u idle_state=%d irqload=%llu online=%u, isolated=%u, reserved=%u, high_irq_load=%u",
+	TP_printk("cpu=%d nr_running=%d cpu_util=%ld cpu_util_cum=%ld capacity_curr=%u capacity=%u capacity_orig=%u idle_state=%d irqload=%llu online=%u, isolated=%u, reserved=%u, high_irq_load=%u nr_rtg_hp=%u",
 		__entry->cpu, __entry->nr_running, __entry->cpu_util,
 		__entry->cpu_util_cum, __entry->capacity_curr,
 		__entry->capacity, __entry->capacity_orig,
 		__entry->idle_state, __entry->irqload, __entry->online,
-		__entry->isolated, __entry->reserved, __entry->high_irq_load)
+		__entry->isolated, __entry->reserved, __entry->high_irq_load,
+		__entry->nr_rtg_high_prio_tasks)
 );
+
+#ifdef OPLUS_FEATURE_SCHED_ASSIST
+TRACE_EVENT(sched_cpu_skip,
+
+	TP_PROTO(struct task_struct *p, bool sysctl_prefer_silver, bool is_ux_task, bool check_freq, bool check_task_util, bool check_cpu_util,
+        bool skip_big_cluster),
+
+	TP_ARGS(p, sysctl_prefer_silver, is_ux_task, check_freq, check_task_util, check_cpu_util, skip_big_cluster),
+
+	TP_STRUCT__entry(
+		__field(int,    pid)
+		__array(char,   comm, TASK_COMM_LEN)
+		__field(bool,   sysctl_prefer_silver)
+		__field(bool,   is_ux_task)
+		__field(bool,   check_freq)
+		__field(bool,   check_task_util)
+		__field(bool,   check_cpu_util)
+		__field(bool,   skip_big_cluster)
+	),
+
+	TP_fast_assign(
+		__entry->pid                    = p ? p->pid : -1;
+		memcpy(__entry->comm, p ? p->comm:"NULL", TASK_COMM_LEN);
+		__entry->sysctl_prefer_silver   = sysctl_prefer_silver;
+		__entry->is_ux_task             = is_ux_task;
+		__entry->check_freq             = check_freq;
+		__entry->check_task_util        = check_task_util;
+		__entry->check_cpu_util         = check_cpu_util;
+		__entry->skip_big_cluster       = skip_big_cluster;
+	),
+
+	TP_printk("pid=%d comm=%s prefer_silver_enabled=%d is_ux_task=%d check_freq=%d check_task_util=%d check_cpu_util=%d skip_big_cluster=%d",
+		__entry->pid, __entry->comm, __entry->sysctl_prefer_silver,
+		__entry->is_ux_task, __entry->check_freq,
+		__entry->check_task_util, __entry->check_cpu_util,
+		__entry->skip_big_cluster)
+);
+
+TRACE_EVENT(sched_cpu_sel,
+
+	TP_PROTO(struct task_struct *p, int task_boost, bool task_skip_min, bool boosted, int boost_pol,
+		int task_util, int cpu_util, bool fit_small, bool sysctl_prefer_silver, bool is_ux_task, int start_cpu),
+
+	TP_ARGS(p, task_boost, task_skip_min, boosted, boost_pol, task_util, cpu_util, fit_small, is_ux_task, sysctl_prefer_silver, start_cpu),
+
+	TP_STRUCT__entry(
+		__field(int,    pid)
+		__array(char,   comm, TASK_COMM_LEN)
+		__field(int,    task_boost)
+		__field(bool,   task_skip_min)
+		__field(bool,   boosted)
+		__field(int,    boost_pol)
+		__field(int,    task_util)
+		__field(int,    cpu_util)
+		__field(bool,   fit_small)
+		__field(bool,   is_ux_task)
+		__field(bool,   sysctl_prefer_silver)
+		__field(int,	start_cpu)
+	),
+
+	TP_fast_assign(
+		__entry->pid                    = p ? p->pid : -1;
+		memcpy(__entry->comm, p ? p->comm:"NULL", TASK_COMM_LEN);
+		__entry->task_boost             = task_boost;
+		__entry->task_skip_min          = task_skip_min;
+		__entry->boosted                = boosted;
+		__entry->boost_pol              = boost_pol;
+		__entry->task_util              = task_util;
+		__entry->cpu_util               = cpu_util;
+		__entry->fit_small              = fit_small;
+		__entry->is_ux_task             = is_ux_task;
+		__entry->sysctl_prefer_silver   = sysctl_prefer_silver;
+		__entry->start_cpu              = start_cpu;
+	),
+
+	TP_printk("pid=%d comm=%s task_boost=%d skip_min=%d boosted=%d boost_pol=%d task_util=%d cpu_util=%d fit_small=%d is_ux_task=%d prefer_silver_enabled=%d start_cpu=%d",
+		__entry->pid, __entry->comm, __entry->task_boost,
+		__entry->task_skip_min, __entry->boosted,
+		__entry->boost_pol, __entry->task_util,
+		__entry->cpu_util, __entry->fit_small, __entry->is_ux_task, __entry->sysctl_prefer_silver, __entry->start_cpu)
+);
+
+#endif
 
 TRACE_EVENT(sched_compute_energy,
 
@@ -1218,11 +1304,11 @@ TRACE_EVENT(sched_task_util,
 		int best_energy_cpu, bool sync, int need_idle, int fastpath,
 		bool placement_boost, u64 start_t,
 		bool stune_boosted, bool is_rtg, bool rtg_skip_min,
-		bool is_uxtop),
+		int start_cpu),
 
 	TP_ARGS(p, candidates, best_energy_cpu, sync, need_idle, fastpath,
 		placement_boost, start_t, stune_boosted, is_rtg, rtg_skip_min,
-		is_uxtop),
+		start_cpu),
 
 	TP_STRUCT__entry(
 		__field(int,		pid)
@@ -1244,7 +1330,6 @@ TRACE_EVENT(sched_task_util,
 		__field(u32,		unfilter)
 		__field(unsigned long,  cpus_allowed)
 		__field(bool,		low_latency)
-		__field(bool,		is_uxtop)
 	),
 
 	TP_fast_assign(
@@ -1262,24 +1347,24 @@ TRACE_EVENT(sched_task_util,
 		__entry->stune_boosted          = stune_boosted;
 		__entry->is_rtg                 = is_rtg;
 		__entry->rtg_skip_min		= rtg_skip_min;
+		__entry->start_cpu		= start_cpu;
 #ifdef CONFIG_SCHED_WALT
 		__entry->unfilter		= p->unfilter;
-		__entry->low_latency		= p->low_latency;
+		__entry->low_latency		= walt_low_latency_task(p);
 #else
 		__entry->unfilter		= 0;
 		__entry->low_latency		= 0;
 #endif
-		__entry->cpus_allowed   = cpumask_bits(&p->cpus_allowed)[0];
-		__entry->is_uxtop		= is_uxtop;
+		__entry->cpus_allowed           = cpumask_bits(&p->cpus_allowed)[0];
 	),
 
-	TP_printk("pid=%d comm=%s util=%lu prev_cpu=%d candidates=%#lx best_energy_cpu=%d sync=%d need_idle=%d fastpath=%d placement_boost=%d latency=%llu stune_boosted=%d is_rtg=%d rtg_skip_min=%d start_cpu=%d unfilter=%u affine=%#lx low_latency=%d is_uxtop=%d",
+	TP_printk("pid=%d comm=%s util=%lu prev_cpu=%d candidates=%#lx best_energy_cpu=%d sync=%d need_idle=%d fastpath=%d placement_boost=%d latency=%llu stune_boosted=%d is_rtg=%d rtg_skip_min=%d start_cpu=%d unfilter=%u affine=%#lx low_latency=%d",
 		__entry->pid, __entry->comm, __entry->util, __entry->prev_cpu,
 		__entry->candidates, __entry->best_energy_cpu, __entry->sync,
 		__entry->need_idle, __entry->fastpath, __entry->placement_boost,
 		__entry->latency, __entry->stune_boosted,
 		__entry->is_rtg, __entry->rtg_skip_min, __entry->start_cpu,
-		__entry->unfilter, __entry->cpus_allowed, __entry->low_latency, __entry->is_uxtop)
+		__entry->unfilter, __entry->cpus_allowed, __entry->low_latency)
 );
 
 /*

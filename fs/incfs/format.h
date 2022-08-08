@@ -256,6 +256,12 @@ struct backing_file_context {
 	 * 0 means there are no metadata records.
 	 */
 	loff_t bc_last_md_record_offset;
+
+	/*
+	 * Credentials to set before reads/writes
+	 * Note that this is a pointer to the mount_info mi_owner field so
+	 * there is no need to get/put the creds
+	 */
 	const struct cred *bc_cred;
 };
 

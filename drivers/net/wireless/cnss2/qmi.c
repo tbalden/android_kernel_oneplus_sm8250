@@ -6,6 +6,13 @@
 #include <linux/soc/qcom/qmi.h>
 #include <linux/oem/boot_mode.h>
 
+#ifdef OPLUS_FEATURE_WIFI_BDF
+//
+//
+#include <soc/oplus/oplus_project.h>
+#include <linux/fs.h>
+#endif /* OPLUS_FEATURE_WIFI_BDF */
+
 #include "bus.h"
 #include "debug.h"
 #include "main.h"
@@ -84,6 +91,18 @@
 #define QMI_WLFW_MAC_READY_TIMEOUT_MS	50
 #define QMI_WLFW_MAC_READY_MAX_RETRY	200
 static int tempstr;
+
+#ifdef CONFIG_CNSS2_DEBUG
+static bool ignore_qmi_failure;
+#define CNSS_QMI_ASSERT() CNSS_ASSERT(ignore_qmi_failure)
+void cnss_ignore_qmi_failure(bool ignore)
+{
+	ignore_qmi_failure = ignore;
+}
+#else
+#define CNSS_QMI_ASSERT() do { } while (0)
+void cnss_ignore_qmi_failure(bool ignore) { }
+#endif
 
 static char *cnss_qmi_mode_to_str(enum cnss_driver_mode mode)
 {
@@ -197,7 +216,7 @@ static int cnss_wlfw_ind_register_send_sync(struct cnss_plat_data *plat_priv)
 	return 0;
 
 out:
-	CNSS_ASSERT(0);
+	CNSS_QMI_ASSERT();
 
 qmi_registered:
 	kfree(req);
@@ -317,7 +336,7 @@ static int cnss_wlfw_host_cap_send_sync(struct cnss_plat_data *plat_priv)
 	return 0;
 
 out:
-	CNSS_ASSERT(0);
+	CNSS_QMI_ASSERT();
 	kfree(req);
 	kfree(resp);
 	return ret;
@@ -406,7 +425,7 @@ int cnss_wlfw_respond_mem_send_sync(struct cnss_plat_data *plat_priv)
 	return 0;
 
 out:
-	CNSS_ASSERT(0);
+	CNSS_QMI_ASSERT();
 	kfree(req);
 	kfree(resp);
 	return ret;
@@ -504,6 +523,10 @@ int cnss_wlfw_tgt_cap_send_sync(struct cnss_plat_data *plat_priv)
 	if (resp->otp_version_valid)
 		plat_priv->otp_version = resp->otp_version;
 
+	if (resp->fw_caps_valid)
+		plat_priv->fw_pcie_gen_switch =
+			!!(resp->fw_caps & QMI_WLFW_HOST_PCIE_GEN_SWITCH_V01);
+
 	cnss_pr_dbg("Target capability: chip_id: 0x%x, chip_family: 0x%x, board_id: 0x%x, soc_id: 0x%x, fw_version: 0x%x, fw_build_timestamp: %s, fw_build_id: %s, otp_version: 0x%x\n",
 		    plat_priv->chip_info.chip_id,
 		    plat_priv->chip_info.chip_family,
@@ -518,7 +541,7 @@ int cnss_wlfw_tgt_cap_send_sync(struct cnss_plat_data *plat_priv)
 	return 0;
 
 out:
-	CNSS_ASSERT(0);
+	CNSS_QMI_ASSERT();
 	kfree(req);
 	kfree(resp);
 	return ret;
@@ -1572,6 +1595,149 @@ static int cnss_get_bdf_file_name(struct cnss_plat_data *plat_priv,
 	return ret;
 }
 
+#ifdef OPLUS_FEATURE_WIFI_BDF
+// check if read bdf is not complete through compare the size with odm/etc/wifi bdf file
+// return 0 if everything ok, otherwise return a non-zero value
+#define FILE_NAME_LENGTH                    128
+#define BDF_FILEPATH                         "/mnt/vendor/persist/"
+#define BDF_ODM_FILEPATH                         "/odm/etc/wifi/"
+#define BDF_VERSION_FILE                         "bin_version"
+
+/* string is in decimal */
+static bool get_integer_from_string(const u8 *str, int *pint)
+{
+	u16 i = 0;
+	*pint = 0;
+
+	while (str[i] != '\0') {
+		if (str[i] >= '0' && str[i] <= '9') {
+			*pint *= 10;
+			*pint += (str[i] - '0');
+		} else {
+			return false;
+		}
+		++i;
+	}
+
+	return true;
+}
+
+static int read_file(char *file_name, u8 *file_buf)
+{
+	int ret = 0;
+	struct file *filp = NULL;
+	struct inode *inode;
+	mm_segment_t old_fs;
+	loff_t pos;
+	loff_t file_len = 0;
+
+	if ((NULL == file_name) || (NULL == file_buf)) {
+		cnss_pr_err("filename/filebuf is NULL");
+		return -EINVAL;
+	}
+
+	filp = filp_open(file_name, O_RDONLY, 0);
+	if (IS_ERR(filp)) {
+		cnss_pr_err("open %s file fail", file_name);
+		return -ENOENT;
+	}
+
+#if 1
+	inode = filp->f_inode;
+#else
+	/* reserved for linux earlier verion */
+	inode = filp->f_dentry->d_inode;
+#endif
+
+	file_len = inode->i_size;
+
+	old_fs = get_fs();
+	set_fs(KERNEL_DS);
+	pos = 0;
+	ret = vfs_read(filp, file_buf, file_len , &pos);
+	if (ret < 0)
+		cnss_pr_err("read file fail");
+	cnss_pr_dbg("file len:%d read len:%d pos:%d", (u32)file_len, ret, (u32)pos);
+	filp_close(filp, NULL);
+	set_fs(old_fs);
+
+	return ret;
+}
+
+int check_bdf_version(struct cnss_plat_data *plat_priv, char *file_name)
+{
+	int ret = -1;
+	const struct firmware *fw_entry = NULL;
+	const u8 *temp;
+	unsigned int remaining;
+	u8 fw_file_buf[FILE_NAME_LENGTH] = { '\0' };
+	char file_path[FILE_NAME_LENGTH] = { '\0' };
+	int odm_verison = 0;
+	int persist_version = 0;
+
+	cnss_pr_dbg("start check with bdf version");
+
+	snprintf(file_path, FILE_NAME_LENGTH, "%s%s", BDF_ODM_FILEPATH, file_name);
+	ret = read_file(file_path, fw_file_buf);
+	if (ret < 0) {
+		cnss_pr_err("Failed to load: %s\n", file_path);
+		return ret;
+	} else {
+		temp = fw_file_buf;
+		get_integer_from_string(temp, &odm_verison);
+		cnss_pr_dbg("read odm_verison %x\n", odm_verison);
+	}
+
+	ret = request_firmware_no_cache(&fw_entry, file_name, &plat_priv->plat_dev->dev);
+	if (ret) {
+		cnss_pr_err("Failed to load: %s\n", file_name);
+		return ret;
+	} else {
+		temp = fw_entry->data;
+		remaining = fw_entry->size;
+		get_integer_from_string(temp, &persist_version);
+		cnss_pr_dbg("read persist_version %x\n", persist_version);
+	}
+
+	if ((persist_version > 0) && (odm_verison > 0) && (persist_version >= odm_verison))
+		ret = 0;
+
+	cnss_pr_dbg("persist version: %x, odm verison: %x", persist_version, odm_verison);
+
+	return ret;
+}
+
+int check_bdf_size(unsigned int download_bdf_size, char* bdf_file_name) {
+	char str[48];
+	struct kstat* stat = NULL;
+	int ret = 0;
+
+	snprintf(str, sizeof(str), "%s%s", BDF_ODM_FILEPATH, bdf_file_name);
+	cnss_pr_dbg("vendor file name: %s", str);
+	stat = (struct kstat*) kzalloc(sizeof(struct kstat), GFP_KERNEL);
+	if (!stat)
+		return -ENOMEM;
+
+	ret = vfs_stat(str, stat);
+	if (ret < 0) {
+		cnss_pr_dbg("stat: %s fail %d", str, ret);
+		if (-ENOENT == ret) {
+			ret = 0;
+		}
+		goto out;
+	}
+
+	cnss_pr_dbg("dl size: %d, stat size: %d", download_bdf_size, stat->size);
+	if (download_bdf_size < stat->size) {
+		ret = -1;
+	}
+
+out:
+	kfree(stat);
+	return ret;
+}
+#endif /* OPLUS_FEATURE_WIFI_BDF */
+
 int cnss_wlfw_bdf_dnld_send_sync(struct cnss_plat_data *plat_priv,
 				 u32 bdf_type)
 {
@@ -1583,10 +1749,10 @@ int cnss_wlfw_bdf_dnld_send_sync(struct cnss_plat_data *plat_priv,
 	const u8 *temp;
 	unsigned int remaining;
 	int ret = 0;
-	char get_bdf_name[3] = {0};
-	char get_bdf_name_ext[4] = {0};
-	u32 bdf_name;
-	u32 bdf_name_ext;
+#ifdef OPLUS_FEATURE_WIFI_BDF
+//Modify for: multi projects using different bdf
+	int loading_bdf_retry_cnt = 5;
+#endif /* OPLUS_FEATURE_WIFI_BDF */
 
 	cnss_pr_dbg("Sending BDF download message, state: 0x%lx, type: %d\n",
 		    plat_priv->driver_state, bdf_type);
@@ -1605,13 +1771,19 @@ int cnss_wlfw_bdf_dnld_send_sync(struct cnss_plat_data *plat_priv,
 				     filename, sizeof(filename));
 	if (ret > 0) {
 		temp = DUMMY_BDF_FILE_NAME;
-		remaining = MAX_FIRMWARE_NAME_LEN;
+		remaining = strlen(DUMMY_BDF_FILE_NAME) + 1;
 		goto bypass_bdf;
 	} else if (ret < 0) {
 		goto err_req_fw;
 	}
 
+#ifdef OPLUS_FEATURE_WIFI_BDF
+//Modify for: multi projects using different bdf
+request_bdf:
+	ret = request_firmware_no_cache(&fw_entry, filename, &plat_priv->plat_dev->dev);
+#else /* OPLUS_FEATURE_WIFI_BDF */
 	ret = request_firmware(&fw_entry, filename, &plat_priv->plat_dev->dev);
+#endif /* OPLUS_FEATURE_WIFI_BDF */
 	if (ret) {
 		cnss_pr_err("Failed to load BDF: %s\n", filename);
 		goto err_req_fw;
@@ -1621,7 +1793,31 @@ int cnss_wlfw_bdf_dnld_send_sync(struct cnss_plat_data *plat_priv,
 	remaining = fw_entry->size;
 
 bypass_bdf:
+    #ifdef OPLUS_FEATURE_WIFI_DCS_SWITCH
+    //Add for wifi switch monitor
+	if (bdf_type == CNSS_BDF_REGDB) {
+		set_bit(CNSS_LOAD_REGDB_SUCCESS, &plat_priv->loadRegdbState);
+	} else if (bdf_type == CNSS_BDF_ELF){
+		set_bit(CNSS_LOAD_BDF_SUCCESS, &plat_priv->loadBdfState);
+	}
+    #endif /* OPLUS_FEATURE_WIFI_DCS_SWITCH */
+
 	cnss_pr_dbg("Downloading BDF: %s, size: %u\n", filename, remaining);
+
+#ifdef OPLUS_FEATURE_WIFI_BDF
+//Modify for: multi projects using different bdf
+	if (strncmp(filename, "bdwlan", 6) == 0
+		&& check_bdf_version(plat_priv, BDF_VERSION_FILE)
+		&& check_bdf_size(remaining, filename) && loading_bdf_retry_cnt > 0) {
+		loading_bdf_retry_cnt -= 1;
+		cnss_pr_dbg("bdf size is too small, maybe bdf is under transfer, retry loading..");
+		// sleep 400 ms
+		msleep_interruptible(400);
+		goto request_bdf;
+	}
+	// reset counter
+	loading_bdf_retry_cnt = 5;
+#endif /* OPLUS_FEATURE_WIFI_BDF */
 
 	while (remaining) {
 		req->valid = 1;
@@ -1703,8 +1899,17 @@ err_send:
 	if (bdf_type != CNSS_BDF_DUMMY)
 		release_firmware(fw_entry);
 err_req_fw:
+#ifdef OPLUS_FEATURE_WIFI_DCS_SWITCH
+    //Add for wifi switch monitor
+	if (bdf_type == CNSS_BDF_REGDB) {
+		set_bit(CNSS_LOAD_REGDB_FAIL, &plat_priv->loadRegdbState);
+	} else if (bdf_type == CNSS_BDF_ELF){
+		set_bit(CNSS_LOAD_BDF_FAIL, &plat_priv->loadBdfState);
+	}
+#endif /* OPLUS_FEATURE_WIFI_DCS_SWITCH */
 	if (bdf_type != CNSS_BDF_REGDB)
-		CNSS_ASSERT(0);
+		CNSS_QMI_ASSERT();
+
 	kfree(req);
 	kfree(resp);
 	return ret;
@@ -1811,7 +2016,7 @@ int cnss_wlfw_m3_dnld_send_sync(struct cnss_plat_data *plat_priv)
 	return 0;
 
 out:
-	CNSS_ASSERT(0);
+	CNSS_QMI_ASSERT();
 	kfree(req);
 	kfree(resp);
 	return ret;
@@ -2022,7 +2227,7 @@ out:
 		cnss_pr_dbg("WLFW service is disconnected while sending mode off request\n");
 		ret = 0;
 	} else {
-		CNSS_ASSERT(0);
+		CNSS_QMI_ASSERT();
 	}
 	kfree(req);
 	kfree(resp);
@@ -2132,7 +2337,7 @@ int cnss_wlfw_wlan_cfg_send_sync(struct cnss_plat_data *plat_priv,
 	return 0;
 
 out:
-	CNSS_ASSERT(0);
+	CNSS_QMI_ASSERT();
 	kfree(req);
 	kfree(resp);
 	return ret;
@@ -2371,6 +2576,64 @@ int cnss_wlfw_ini_send_sync(struct cnss_plat_data *plat_priv,
 out:
 	kfree(req);
 	kfree(resp);
+	return ret;
+}
+
+int cnss_wlfw_send_pcie_gen_speed_sync(struct cnss_plat_data *plat_priv)
+{
+	struct wlfw_pcie_gen_switch_req_msg_v01 req;
+	struct wlfw_pcie_gen_switch_resp_msg_v01 resp;
+	struct qmi_txn txn;
+	int ret = 0;
+
+	if (!plat_priv)
+		return -ENODEV;
+
+	if (plat_priv->pcie_gen_speed == QMI_PCIE_GEN_SPEED_INVALID_V01 ||
+	    !plat_priv->fw_pcie_gen_switch) {
+		cnss_pr_dbg("PCIE Gen speed not setup\n");
+		return 0;
+	}
+
+	cnss_pr_dbg("Sending PCIE Gen speed: %d state: 0x%lx\n",
+		    plat_priv->pcie_gen_speed, plat_priv->driver_state);
+	req.pcie_speed = (enum wlfw_pcie_gen_speed_v01)
+			plat_priv->pcie_gen_speed;
+
+	ret = qmi_txn_init(&plat_priv->qmi_wlfw, &txn,
+			   wlfw_pcie_gen_switch_resp_msg_v01_ei, &resp);
+	if (ret < 0) {
+		cnss_pr_err("Failed to initialize txn for PCIE speed switch err: %d\n",
+			    ret);
+		goto out;
+	}
+
+	ret = qmi_send_request(&plat_priv->qmi_wlfw, NULL, &txn,
+			       QMI_WLFW_PCIE_GEN_SWITCH_REQ_V01,
+			       WLFW_PCIE_GEN_SWITCH_REQ_MSG_V01_MAX_MSG_LEN,
+			       wlfw_pcie_gen_switch_req_msg_v01_ei, &req);
+	if (ret < 0) {
+		qmi_txn_cancel(&txn);
+		cnss_pr_err("Failed to send PCIE speed switch, err: %d\n", ret);
+		goto out;
+	}
+
+	ret = qmi_txn_wait(&txn, QMI_WLFW_TIMEOUT_JF);
+	if (ret < 0) {
+		cnss_pr_err("Failed to wait for PCIE Gen switch resp, err: %d\n",
+			    ret);
+		goto out;
+	}
+
+	if (resp.resp.result != QMI_RESULT_SUCCESS_V01) {
+		cnss_pr_err("PCIE Gen Switch req failed, Speed: %d, result: %d, err: %d\n",
+			    plat_priv->pcie_gen_speed, resp.resp.result,
+			    resp.resp.error);
+		ret = -resp.resp.result;
+	}
+out:
+	/* Reset PCIE Gen speed after one time use */
+	plat_priv->pcie_gen_speed = QMI_PCIE_GEN_SPEED_INVALID_V01;
 	return ret;
 }
 
@@ -3063,17 +3326,19 @@ static void cnss_wlfw_respond_get_info_ind_cb(struct qmi_handle *qmi_wlfw,
 	struct cnss_plat_data *plat_priv =
 		container_of(qmi_wlfw, struct cnss_plat_data, qmi_wlfw);
 	const struct wlfw_respond_get_info_ind_msg_v01 *ind_msg = data;
-
+        #ifndef OPLUS_BUG_STABILITY
 	cnss_pr_vdbg("Received QMI WLFW respond get info indication\n");
+        #endif /*OPLUS_BUG_STABILITY*/
 
 	if (!txn) {
 		cnss_pr_err("Spurious indication\n");
 		return;
 	}
-
+        #ifndef OPLUS_BUG_STABILITY
 	cnss_pr_vdbg("Extract message with event length: %d, type: %d, is last: %d, seq no: %d\n",
 		     ind_msg->data_len, ind_msg->type,
 		     ind_msg->is_last, ind_msg->seq_no);
+        #endif /*OPLUS_BUG_STABILITY*/
 
 	if (plat_priv->get_info_cb_ctx && plat_priv->get_info_cb)
 		plat_priv->get_info_cb(plat_priv->get_info_cb_ctx,
@@ -3190,7 +3455,7 @@ static int cnss_wlfw_connect_to_server(struct cnss_plat_data *plat_priv,
 	return 0;
 
 out:
-	CNSS_ASSERT(0);
+	CNSS_QMI_ASSERT();
 	kfree(data);
 	return ret;
 }
@@ -3207,6 +3472,8 @@ int cnss_wlfw_server_arrive(struct cnss_plat_data *plat_priv, void *data)
 		CNSS_ASSERT(0);
 		return -EINVAL;
 	}
+
+	cnss_ignore_qmi_failure(false);
 
 	ret = cnss_wlfw_connect_to_server(plat_priv, data);
 	if (ret < 0)
@@ -3231,6 +3498,8 @@ out:
 
 int cnss_wlfw_server_exit(struct cnss_plat_data *plat_priv)
 {
+	int ret;
+
 	if (!plat_priv)
 		return -ENODEV;
 
@@ -3239,6 +3508,15 @@ int cnss_wlfw_server_exit(struct cnss_plat_data *plat_priv)
 	cnss_pr_info("QMI WLFW service disconnected, state: 0x%lx\n",
 		     plat_priv->driver_state);
 
+	cnss_qmi_deinit(plat_priv);
+
+	clear_bit(CNSS_QMI_DEL_SERVER, &plat_priv->driver_state);
+
+	ret = cnss_qmi_init(plat_priv);
+	if (ret < 0) {
+		cnss_pr_err("QMI WLFW service registraton failed, ret\n", ret);
+		CNSS_ASSERT(0);
+	}
 	return 0;
 }
 
@@ -3248,6 +3526,13 @@ static int wlfw_new_server(struct qmi_handle *qmi_wlfw,
 	struct cnss_plat_data *plat_priv =
 		container_of(qmi_wlfw, struct cnss_plat_data, qmi_wlfw);
 	struct cnss_qmi_event_server_arrive_data *event_data;
+
+	if (plat_priv && test_bit(CNSS_QMI_DEL_SERVER,
+				  &plat_priv->driver_state)) {
+		cnss_pr_info("WLFW server delete in progress, Ignore server arrive, state: 0x%lx\n",
+			     plat_priv->driver_state);
+		return 0;
+	}
 
 	cnss_pr_dbg("WLFW server arriving: node %u port %u\n",
 		    service->node, service->port);
@@ -3271,7 +3556,19 @@ static void wlfw_del_server(struct qmi_handle *qmi_wlfw,
 	struct cnss_plat_data *plat_priv =
 		container_of(qmi_wlfw, struct cnss_plat_data, qmi_wlfw);
 
+	if (plat_priv && test_bit(CNSS_QMI_DEL_SERVER,
+				  &plat_priv->driver_state)) {
+		cnss_pr_info("WLFW server delete in progress, Ignore server delete, state: 0x%lx\n",
+			     plat_priv->driver_state);
+		return;
+	}
+
 	cnss_pr_dbg("WLFW server exiting\n");
+
+	if (plat_priv) {
+		cnss_ignore_qmi_failure(true);
+		set_bit(CNSS_QMI_DEL_SERVER, &plat_priv->driver_state);
+	}
 
 	cnss_driver_event_post(plat_priv, CNSS_DRIVER_EVENT_SERVER_EXIT,
 			       0, NULL);

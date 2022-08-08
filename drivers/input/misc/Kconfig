@@ -117,6 +117,17 @@ config INPUT_E3X0_BUTTON
 	  To compile this driver as a module, choose M here: the
 	  module will be called e3x0_button.
 
+config INPUT_HBTP_INPUT
+	tristate "HBTP input driver support"
+	help
+	  This option enables an input driver for the host based touch
+	  processing.
+
+	  Say Y to enable HBTP input driver.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called hbtp_input.
+
 config INPUT_PCSPKR
 	tristate "PC Speaker support"
 	depends on PCSPKR_PLATFORM
@@ -172,18 +183,6 @@ config INPUT_QPNP_POWER_ON
 	  functionality of Qualcomm Technologies, Inc. PNP PMICs.  It supports
 	  reporting the change in status of the KPDPWR_N line (connected to the
 	  power-key) as well as reset features.
-
-config KEY_FLUSH
-	bool "Key trigger flush"
-	depends on PANIC_FLUSH
-	default y
-	help
-	  This option enables device driver support for flush blk devices using
-	  panic_flush module triggered by qpnp power key.
-
-	  panic_flush.o must be compiled.
-
-	  If unsure, say Y.
 
 config INPUT_QTI_HAPTICS
 	tristate "Haptics support for QTI PMIC"
@@ -886,4 +885,14 @@ config INPUT_SC27XX_VIBRA
 	  To compile this driver as a module, choose M here. The module will
 	  be called sc27xx_vibra.
 
+config STMVL53L1
+	tristate "STM VL53L1 Proximity support"
+	depends on I2C=y
+	default y
+	help
+	  Say Y here if you want to use STMicroelectronics's vl53L1 TOF AF sensor
+	  through I2C interface.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called stmvl53l1.
 endif

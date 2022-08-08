@@ -33,13 +33,19 @@
 #include <linux/of.h>
 #include <asm/current.h>
 #include <linux/timer.h>
-
-#include "peripheral-loader.h"
-#include <linux/proc_fs.h>
-#include <linux/esoc_client.h>
-#include <linux/oem/boot_mode.h>
 #include <linux/seq_file.h>
 #include <linux/proc_fs.h>
+
+#include "peripheral-loader.h"
+#ifdef OPLUS_BUG_STABILITY
+/*Add for disable dump for subsys crash*/
+#include <soc/oplus/system/oplus_project.h>
+extern bool oem_is_fulldump(void);
+bool delay_panic = false;
+#endif
+#ifdef OPLUS_BUG_STABILITY
+bool direct_panic = false;
+#endif
 
 #define DISABLE_SSR 0x9889deed
 /* If set to 0x9889deed, call to subsystem_restart_dev() returns immediately */
@@ -48,6 +54,9 @@ module_param(disable_restart_work, uint, 0644);
 
 static int enable_debug;
 module_param(enable_debug, int, 0644);
+//#ifdef OPLUS_FEATURE_SENSOR
+static DEFINE_MUTEX(subsys_list_lock);
+//#endif
 
 /* The maximum shutdown timeout is the product of MAX_LOOPS and DELAY_MS. */
 #define SHUTDOWN_ACK_MAX_LOOPS	100
@@ -211,6 +220,25 @@ struct subsys_device {
 	struct list_head list;
 };
 
+#ifdef OPLUS_FEATURE_ADSP_RECOVERY
+static bool oplus_adsp_ssr = false;
+
+void oplus_set_ssr_state(bool ssr_state)
+{
+	oplus_adsp_ssr = ssr_state;
+	pr_err("%s():oplus_adsp_ssr=%d\n", __func__, oplus_adsp_ssr);
+
+}
+EXPORT_SYMBOL(oplus_set_ssr_state);
+
+bool oplus_get_ssr_state(void)
+{
+	pr_err("%s():oplus_adsp_ssr=%d\n", __func__, oplus_adsp_ssr);
+	return oplus_adsp_ssr;
+}
+EXPORT_SYMBOL(oplus_get_ssr_state);
+#endif /* OPLUS_FEATURE_ADSP_RECOVERY */
+
 static struct subsys_device *to_subsys(struct device *d)
 {
 	return container_of(d, struct subsys_device, dev);
@@ -289,7 +317,16 @@ static ssize_t restart_level_store(struct device *dev,
 		if (!strncasecmp(buf, restart_levels[i], count)) {
 			pil_ipc("[%s]: change restart level to %d\n",
 				subsys->desc->name, i);
-			subsys->restart_level = i;
+                        //#ifdef OPLUS_BUG_STABILITY
+			if(PREVERSION == get_eng_version()){
+				pr_info("preversion \n");
+				subsys->restart_level = RESET_SUBSYS_COUPLED;
+			} else {
+				subsys->restart_level = i;
+			}
+                        //#else
+                        //subsys->restart_level = i;
+                        //#endif /*OPLUS_BUG_STABILITY*/
 			return orig_count;
 		}
 	return -EPERM;
@@ -356,7 +393,40 @@ static ssize_t system_debug_store(struct device *dev,
 	return orig_count;
 }
 static DEVICE_ATTR_RW(system_debug);
+//#ifdef OPLUS_FEATURE_SENSOR
+#define CRASH_CAUSE_BUF_LEN 128
+char crash_case_buf[CRASH_CAUSE_BUF_LEN] = {0};
 
+void set_subsys_crash_cause(char *str){
+	int len = 0;
+	len = strlen(str);
+	if(len >= CRASH_CAUSE_BUF_LEN)
+		len = CRASH_CAUSE_BUF_LEN -1;
+	//mutex_lock(&subsys_list_lock);
+	memcpy(crash_case_buf, str, len);
+	crash_case_buf[len] = '\0';
+	//mutex_unlock(&subsys_list_lock);
+}
+EXPORT_SYMBOL(set_subsys_crash_cause);
+
+static ssize_t crash_cause_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	int ret = 0;
+	mutex_lock(&subsys_list_lock);
+	ret = snprintf(buf, PAGE_SIZE, "%s\n", crash_case_buf);
+	mutex_unlock(&subsys_list_lock);
+	return ret;
+}
+
+static ssize_t crash_cause_store(struct device *dev,
+				struct device_attribute *attr, const char *buf,
+				size_t count)
+{
+	return count;
+}
+static DEVICE_ATTR_RW(crash_cause);
+//#endif
 int subsys_get_restart_level(struct subsys_device *dev)
 {
 	return dev->restart_level;
@@ -434,6 +504,9 @@ static struct attribute *subsys_attrs[] = {
 	&dev_attr_restart_level.attr,
 	&dev_attr_firmware_name.attr,
 	&dev_attr_system_debug.attr,
+	//#ifdef OPLUS_FEATURE_SENSOR
+	&dev_attr_crash_cause.attr,
+	//#endif
 	NULL,
 };
 
@@ -461,7 +534,9 @@ static LIST_HEAD(subsys_list);
 static LIST_HEAD(ssr_order_list);
 static DEFINE_MUTEX(soc_order_reg_lock);
 static DEFINE_MUTEX(restart_log_mutex);
-static DEFINE_MUTEX(subsys_list_lock);
+//#ifdef OPLUS_FEATURE_SENSOR
+//static DEFINE_MUTEX(subsys_list_lock);
+//#endif
 static DEFINE_MUTEX(char_device_lock);
 static DEFINE_MUTEX(ssr_order_mutex);
 
@@ -884,111 +959,29 @@ struct subsys_device *find_subsys_device(const char *str)
 }
 EXPORT_SYMBOL(find_subsys_device);
 
-static int val;
-static int restart_level;/*system original val*/
-struct delayed_work op_restart_modem_work;
-
-static ssize_t proc_restart_level_all_read(struct file *p_file,
-			char __user *puser_buf, size_t count, loff_t *p_offset)
+#ifdef OPLUS_BUG_STABILITY
+int op_restart_modem(struct subsys_device *subsys)
 {
-	ssize_t len = 0;
+	int restart_level;
 
-	len = copy_to_user(puser_buf, val?"1":"0", 1);
-	pr_info("the restart level switch is:%d\n", val);
-	return len;
-}
-
-static ssize_t proc_restart_level_all_write(struct file *p_file,
-	const char __user *puser_buf,
-	size_t count, loff_t *p_offset)
-{
-	char subsysname[][10] = {
-		"ipa_fws",
-		"ipa_uc",
-		"wlan",
-		"esoc0",
-		"adsp",
-		"cdsp",
-		"venus",
-		"spss",
-		"cvpss",
-		"npu",
-		"slpi",
-		"a650_zap"
-	};
-	int i = 0;
-	char temp[4] = {0};
-	struct subsys_device *subsys;
-	int rc;
-
-	if (copy_from_user(temp, puser_buf, 1))
-		return -EFAULT;
-
-	rc = kstrtoint(temp, 0, &val);
-	if (rc != 0)
-		return -EINVAL;
-
-	cancel_delayed_work_sync(&op_restart_modem_work);
-
-	for (i = 0 ; i < ARRAY_SIZE(subsysname); i++) {
-		subsys = find_subsys_device(subsysname[i]);
-		if (subsys) {
-			if (val == 1)
-				subsys->restart_level = RESET_SOC;
-			else
-				subsys->restart_level = RESET_SUBSYS_COUPLED;
-		}
-	}
-	pr_info("write the restart level switch to :%d\n", val);
-	return count;
-}
-
-static const struct file_operations restart_level_all_operations = {
-	.read = proc_restart_level_all_read,
-	.write = proc_restart_level_all_write,
-};
-
-static void init_restart_level_all_node(void)
-{
-	if (!proc_create("restart_level_all", 0644, NULL,
-			&restart_level_all_operations)){
-		pr_err("%s : Failed to register proc interface\n", __func__);
-	}
-}
-
-static void op_restart_modem_work_fun(struct work_struct *work)
-{
-	struct subsys_device *subsys = find_subsys_device("modem");
-
-	if (!subsys)
-		return;
-	subsys->restart_level = restart_level;
-	pr_err("%s:level=%d\n", __func__, subsys->restart_level);
-}
-
-int op_restart_modem_init(void)
-{
-	INIT_DELAYED_WORK(&op_restart_modem_work, op_restart_modem_work_fun);
-	return 0;
-}
-
-int op_restart_modem(void)
-{
-	struct subsys_device *subsys = find_subsys_device("modem");
-
-	if (!subsys)
+	if (!subsys) {
 		return -ENODEV;
-	pr_err("%s:level=%d\n", __func__, subsys->restart_level);
+	}
+
+	pr_err("%s\n", __func__);
+
 	restart_level = subsys->restart_level;
 	subsys->restart_level = RESET_SUBSYS_COUPLED;
-	if (subsystem_restart("modem") == -ENODEV)
-		pr_err("%s: SSR call failed\n", __func__);
+	if (subsys->desc->force_reset) {
+		subsys->desc->force_reset(subsys->desc);
+	}
 
-	schedule_delayed_work(&op_restart_modem_work,
-			msecs_to_jiffies(10*1000));
+	subsys->restart_level = restart_level;
+
 	return 0;
 }
 EXPORT_SYMBOL(op_restart_modem);
+#endif /* OPLUS_BUG_STABILITY */
 
 static int subsys_start(struct subsys_device *subsys)
 {
@@ -1368,71 +1361,116 @@ static void device_restart_work_hdlr(struct work_struct *work)
 							dev->desc->name);
 }
 
-int oem_restart_modem(struct subsys_device *subsys)
+#ifdef OPLUS_FEATURE_MODEM_MINIDUMP
+unsigned int getBKDRHash(char *str, unsigned int len)
 {
-	int restart_level;
-
-	if (!subsys)
-		return -ENODEV;
-
-	pr_err("%s\n", __func__);
-
-	restart_level = subsys->restart_level;
-	subsys->restart_level = RESET_SUBSYS_COUPLED;
-
-	if (subsys->desc->force_reset)
-		subsys->desc->force_reset(subsys->desc);
-
-	subsys->restart_level = restart_level;
-
-	return 0;
-}
-EXPORT_SYMBOL(oem_restart_modem);
-
-static ssize_t force_rst_write(struct file *file,
-				const char __user *buf,
-				size_t count,
-				loff_t *lo)
-{
-	char read_buf[4] = {0};
-	struct subsys_device *subsys = find_subsys_device("esoc0");
-
-	if (!subsys)
+	unsigned int seed = 131; /* 31 131 1313 13131 131313 etc.. */
+	unsigned int hash = 0;
+	unsigned int i    = 0;
+	if (str == NULL) {
 		return 0;
-
-	if (copy_from_user(read_buf, buf, 1)) {
-		pr_err("%s: failed to copy from user.\n", __func__);
-		return count;
 	}
-
-	pr_info("%s: %s\n", __func__, read_buf);
-
-	if (!strncmp(read_buf, "2", 1))
-		panic("force esoc crash");
-
-	if (!strncmp(read_buf, "1", 1)) {
-		pr_err("force to reset modem\n");
-		oem_restart_modem(subsys);
+	for(i = 0; i < len; str++, i++) {
+		hash = (hash * seed) + (*str);
 	}
-
-	return count;
+	return hash;
 }
+EXPORT_SYMBOL(getBKDRHash);
 
-static ssize_t force_rst_read(struct file *file,
-				char __user *buf,
-				size_t count,
-				loff_t *ppos)
+void __subsystem_send_uevent(struct device *dev, char *reason)
 {
-	return count;
+	int ret_val;
+	char modem_event[] = "MODEM_EVENT=modem_failure";
+	char modem_reason[300] = {0};
+	char modem_hashreason[MAX_REASON_LEN] = {0};
+	char *envp[4];
+	unsigned int hashid = 0;
+
+	envp[0] = (char *)&modem_event;
+	if(reason){
+		snprintf(modem_reason, sizeof(modem_reason),"MODEM_REASON=%s", reason);
+	}else{
+	    snprintf(modem_reason, sizeof(modem_reason),"MODEM_REASON=unkown");
+	}
+	modem_reason[299] = 0;
+	envp[1] = (char *)&modem_reason;
+
+	hashid = getBKDRHash(reason, strlen(reason));
+	snprintf(modem_hashreason, sizeof(modem_hashreason), "MODEM_HASH_REASON=fid:%u;cause:%s", hashid, reason);
+	modem_hashreason[MAX_REASON_LEN - 1] = 0;
+	pr_info("__subsystem_send_uevent: modem_hashreason: %s\n", modem_hashreason);
+	envp[2] = (char *)&modem_hashreason;
+
+	envp[3] = 0;
+
+	if(dev){
+		ret_val = kobject_uevent_env(&(dev->kobj), KOBJ_CHANGE, envp);
+		if(!ret_val){
+			pr_info("modem crash:kobject_uevent_env success!\n");
+		}else{
+			pr_info("modem crash:kobject_uevent_env fail,error=%d!\n", ret_val);
+		}
+    }
 }
+EXPORT_SYMBOL(__subsystem_send_uevent);
 
-static const struct file_operations esoc_force_rst_fops = {
-	.write = force_rst_write,
-	.read  = force_rst_read,
-	.open  = simple_open,
-	.owner = THIS_MODULE,
-};
+void subsystem_send_uevent(struct subsys_device *dev, char *reason)
+{
+	__subsystem_send_uevent(&(dev->dev), reason);
+	return;
+}
+EXPORT_SYMBOL(subsystem_send_uevent);
+#endif /*OPLUS_FEATURE_MODEM_MINIDUMP*/
 
+#ifdef OPLUS_FEATURE_WIFI_DCS_SWITCH
+#define WCNSS_CRASH_REASON_SMEM		422
+#include <linux/soc/qcom/smem.h>
+#include <linux/soc/qcom/smem_state.h>
+void __wlan_subsystem_send_uevent(struct device *dev, char *reason, const char *name)
+{
+	int ret_val;
+	char event[] = "WLAN_SWITCH_EVENT=Subsystem";
+	char fw_Reason[300] = {0};
+	char sub_name[300] = {0};
+	char *envp[4];
+
+	if (name) {
+		snprintf(sub_name, sizeof(sub_name), "subsystem_name=%s", name);
+	} else {
+		snprintf(sub_name, sizeof(sub_name), "subsystem_name=unkown");
+	}
+
+	if (reason) {
+		snprintf(fw_Reason, sizeof(fw_Reason), "WLAN_MONITER_REASON=%s", reason);
+	} else {
+		snprintf(fw_Reason, sizeof(fw_Reason), "WLAN_MONITER_REASON=unkown");
+	}
+
+	envp[0] = (char *)&event;
+
+	fw_Reason[299] = 0;
+	envp[1] = (char *)&fw_Reason;
+	envp[2] = (char *)&sub_name;
+	envp[3] = 0;
+
+	if (dev) {
+		ret_val = kobject_uevent_env(&(dev->kobj), KOBJ_CHANGE, envp);
+		if (!ret_val) {
+			pr_info("wlan crash:kobject_uevent_env success!\n");
+		} else {
+			pr_info("wlan crash:kobject_uevent_env fail,error=%d!\n", ret_val);
+		}
+	}
+}
+EXPORT_SYMBOL(__wlan_subsystem_send_uevent);
+
+void wlan_subsystem_send_uevent(struct subsys_device *dev, char *reason, const char *name)
+{
+	__wlan_subsystem_send_uevent(&(dev->dev), reason, name);
+	return;
+}
+EXPORT_SYMBOL(wlan_subsystem_send_uevent);
+#endif /* OPLUS_FEATURE_WIFI_DCS_SWITCH */
 
 int subsystem_restart_dev(struct subsys_device *dev)
 {
@@ -1448,6 +1486,22 @@ int subsystem_restart_dev(struct subsys_device *dev)
 
 	name = dev->desc->name;
 
+#ifdef OPLUS_FEATURE_ADSP_RECOVERY
+	if (name && !strcmp(name, "adsp")) {
+		if (oplus_get_ssr_state()) {
+			pr_err("%s: adsp restarting, Ignoring request\n", __func__);
+			return 0;
+		} else {
+			oplus_set_ssr_state(true);
+		}
+	}
+#endif
+#ifdef OPLUS_FEATURE_WIFI_DCS_SWITCH
+	if (subsys_get_crash_status(dev) == CRASH_STATUS_ERR_FATAL) {
+		pr_info("subsystem_restart_dev wlan send uevent");
+		__wlan_subsystem_send_uevent(&(dev->dev), "", dev->desc->name);
+	}
+#endif /* OPLUS_FEATURE_WIFI_DCS_SWITCH */
 	send_early_notifications(dev->early_notify);
 
 	/*
@@ -1476,21 +1530,19 @@ int subsystem_restart_dev(struct subsys_device *dev)
 		__subsystem_restart_dev(dev);
 		break;
 	case RESET_SOC:
-	/*small board absent ignore reset soc*/
-	if (get_small_board_1_absent() == 1 || get_small_board_2_absent() == 1) {
-		pr_warn("subsys-restart: small board absent restart request for %s\n", name);
-		__subsystem_restart_dev(dev);
-	} else if (!oem_get_modemdump_mode() && !(strcmp(name, "esoc0")) && oem_get_download_mode()) {
-		pr_err("%s ssr state=%d\n", name, get_esoc_ssr_state());
-		if (get_esoc_ssr_state() == 0) {
-			set_esoc_ssr_state(1);
+		if (!strcmp(name, "esoc0") && oem_is_fulldump()) {
+			if (!direct_panic) {
+				delay_panic = true;
+			}
+			direct_panic = false;
 			__subsystem_restart_dev(dev);
+			break;
+		} else {
+			direct_panic = false;
+			__pm_stay_awake(dev->ssr_wlock);
+			schedule_work(&dev->device_restart_work);
 		}
-	} else {
-		__pm_stay_awake(dev->ssr_wlock);
-		schedule_work(&dev->device_restart_work);
-	}
-	return 0;
+		return 0;
 	default:
 		panic("subsys-restart: Unknown restart level!\n");
 		break;
@@ -2058,6 +2110,10 @@ struct subsys_device *subsys_register(struct subsys_desc *desc)
 	subsys->dev.bus = &subsys_bus_type;
 	subsys->dev.release = subsys_device_release;
 	subsys->notif_state = -1;
+#ifdef OPLUS_BUG_STABILITY
+	if(!oplus_daily_build() && !(get_eng_version() == AGING))
+		subsys->restart_level = RESET_SUBSYS_COUPLED;
+#endif /*OPLUS_BUG_STABILITY */
 	subsys->desc->sysmon_pid = -1;
 	subsys->desc->state = NULL;
 	strlcpy(subsys->desc->fw_name, desc->name,
@@ -2216,11 +2272,66 @@ static struct notifier_block panic_nb = {
 	.notifier_call  = ssr_panic_handler,
 };
 
+extern bool ts_wait_error;
+extern bool ts_send_error;
+#ifdef CONFIG_ESOC_MDM_4x
+extern bool modem_force_rst;
+#endif
+
+static ssize_t force_rst_write(struct file *file,
+				const char __user *buf,
+				size_t count,
+				loff_t *lo)
+{
+	char read_buf[4] = {0};
+	struct subsys_device *subsys = find_subsys_device("esoc0");
+
+	if (!subsys)
+		return 0;
+
+	if (copy_from_user(read_buf, buf, 1)) {
+		pr_err("%s: failed to copy from user.\n", __func__);
+		return count;
+	}
+
+	pr_info("%s: %s\n", __func__, read_buf);
+
+	if (!strncmp(read_buf, "2", 1)) {
+		panic("force esoc crash");
+	}
+
+	if (!strncmp(read_buf, "1", 1) && (ts_send_error || ts_wait_error)) {
+#ifdef CONFIG_ESOC_MDM_4x
+		modem_force_rst = true;
+#endif
+		ts_wait_error = false;
+		ts_send_error = false;
+		pr_err("force to reset modem\n");
+		op_restart_modem(subsys);
+	}
+
+	return count;
+}
+
+static ssize_t force_rst_read(struct file *file,
+				char __user *buf,
+				size_t count,
+				loff_t *ppos)
+{
+	return count;
+}
+
+static const struct file_operations esoc_force_rst_fops = {
+    .write = force_rst_write,
+    .read  = force_rst_read,
+    .open  = simple_open,
+    .owner = THIS_MODULE,
+};
+
 static int __init subsys_restart_init(void)
 {
 	int ret;
 	struct proc_dir_entry *d_entry = NULL;
-
 	ssr_wq = alloc_workqueue("ssr_wq",
 		WQ_UNBOUND | WQ_HIGHPRI | WQ_CPU_INTENSIVE, 0);
 	BUG_ON(!ssr_wq);
@@ -2241,11 +2352,10 @@ static int __init subsys_restart_init(void)
 	if (ret)
 		goto err_soc;
 
-	init_restart_level_all_node();
-
-	d_entry = proc_create_data("force_reset", 0664, NULL, &esoc_force_rst_fops, NULL);
-	if (!d_entry)
+	d_entry = proc_create_data("force_reset", 0666, NULL, &esoc_force_rst_fops, NULL);
+	if (!d_entry) {
 		goto err_soc;
+	}
 
 	return 0;
 

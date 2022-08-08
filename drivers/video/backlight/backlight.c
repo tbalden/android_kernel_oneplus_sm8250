@@ -105,21 +105,21 @@ static inline void backlight_unregister_fb(struct backlight_device *bd)
 //{
 //	char *envp[2];
 
-//	switch (reason) {
-//	case BACKLIGHT_UPDATE_SYSFS:
-//		envp[0] = "SOURCE=sysfs";
-//		break;
-//	case BACKLIGHT_UPDATE_HOTKEY:
-//		envp[0] = "SOURCE=hotkey";
-//		break;
-//	default:
-//		envp[0] = "SOURCE=unknown";
-//		break;
-//	}
-//	envp[1] = NULL;
-//	kobject_uevent_env(&bd->dev.kobj, KOBJ_CHANGE, envp);
-//	sysfs_notify(&bd->dev.kobj, NULL, "actual_brightness");
-//}
+	switch (reason) {
+	case BACKLIGHT_UPDATE_SYSFS:
+		envp[0] = "SOURCE=sysfs";
+		break;
+	case BACKLIGHT_UPDATE_HOTKEY:
+		envp[0] = "SOURCE=hotkey";
+		break;
+	default:
+		envp[0] = "SOURCE=unknown";
+		break;
+	}
+	envp[1] = NULL;
+	/* kobject_uevent_env(&bd->dev.kobj, KOBJ_CHANGE, envp); */
+	sysfs_notify(&bd->dev.kobj, NULL, "actual_brightness");
+}
 
 static ssize_t bl_power_show(struct device *dev, struct device_attribute *attr,
 		char *buf)

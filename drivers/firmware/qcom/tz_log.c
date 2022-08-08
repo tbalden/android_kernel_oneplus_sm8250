@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2016-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
  */
+#include <linux/debugfs.h>
 #include <linux/errno.h>
 #include <linux/delay.h>
 #include <linux/io.h>
@@ -16,14 +17,17 @@
 #include <linux/of.h>
 #include <linux/dma-buf.h>
 #include <linux/ion_kernel.h>
-#include <linux/proc_fs.h>
 
 #include <soc/qcom/scm.h>
 #include <soc/qcom/qseecomi.h>
 #include <soc/qcom/qtee_shmbridge.h>
 
+//#ifdef OPLUS_FEATURE_SECURITY_COMMON
+#include <linux/proc_fs.h>
+#define TZDBG_DIR_NAME "tzdbg"
+//#endif
 /* QSEE_LOG_BUF_SIZE = 32K */
-#define QSEE_LOG_BUF_SIZE 0x10000
+#define QSEE_LOG_BUF_SIZE 0x8000
 
 
 /* TZ Diagnostic Area legacy version number */
@@ -724,12 +728,14 @@ static int _disp_hyp_log_stats(size_t count)
 {
 	static struct hypdbg_log_pos_t log_start = {0};
 	uint8_t *log_ptr;
+	uint32_t log_len;
 
 	log_ptr = (uint8_t *)((unsigned char *)tzdbg.hyp_diag_buf +
 				tzdbg.hyp_diag_buf->ring_off);
+	log_len = tzdbg.hyp_debug_rw_buf_size - tzdbg.hyp_diag_buf->ring_off;
 
 	return __disp_hyp_log_stats(log_ptr, &log_start,
-			tzdbg.hyp_debug_rw_buf_size, count, TZDBG_HYP_LOG);
+			log_len, count, TZDBG_HYP_LOG);
 }
 
 static int _disp_qsee_log_stats(size_t count)
@@ -781,7 +787,12 @@ static ssize_t tzdbgfs_read(struct file *file, char __user *buf,
 	size_t count, loff_t *offp)
 {
 	int len = 0;
-	int *tz_id = PDE_DATA(file_inode(file));
+//#ifdef OPLUS_FEATURE_SECURITY_COMMON
+	struct seq_file *seq = file->private_data;
+	int *tz_id = (int *)(seq->private);
+//else
+	//int *tz_id =  file->private_data;
+//#endif
 
 	if (*tz_id == TZDBG_BOOT || *tz_id == TZDBG_RESET ||
 		*tz_id == TZDBG_INTERRUPT || *tz_id == TZDBG_GENERAL ||
@@ -840,10 +851,27 @@ static ssize_t tzdbgfs_read(struct file *file, char __user *buf,
 				tzdbg.stat[(*tz_id)].data, len);
 }
 
+//#ifdef OPLUS_FEATURE_SECURITY_COMMON
+static int tzdbg_proc_open(struct inode *inode, struct file *file)
+{
+    return single_open(file, NULL, PDE_DATA(inode));
+}
+
+static int tzdbg_proc_release(struct inode *inode, struct file *file)
+{
+    return single_release(inode, file);
+}
+//#endif
+
 static const struct file_operations tzdbg_fops = {
 	.owner   = THIS_MODULE,
 	.read    = tzdbgfs_read,
-	.open    = simple_open,
+//#ifdef OPLUS_FEATURE_SECURITY_COMMON
+	.open    = tzdbg_proc_open,
+	.release = tzdbg_proc_release,
+//else
+	//.open    = simple_open,
+//#endif
 };
 
 
@@ -895,14 +923,71 @@ err:
 	dma_free_coherent(&pdev->dev, len, (void *)g_qsee_log, coh_pmem);
 }
 
+//#ifdef OPLUS_FEATURE_SECURITY_COMMON
+//change tzdbg node to proc.
+static int  tzdbg_procfs_init(struct platform_device *pdev)
+{
+	int rc = 0;
+	int i;
+	struct proc_dir_entry           *dent_dir;
+	struct proc_dir_entry           *dent;
+
+	dent_dir = proc_mkdir(TZDBG_DIR_NAME, NULL);
+	if (dent_dir == NULL) {
+		dev_err(&pdev->dev, "tzdbg proc_mkdir failed\n");
+		return -ENOMEM;
+	}
+
+	for (i = 0; i < TZDBG_STATS_MAX; i++) {
+		tzdbg.debug_tz[i] = i;
+		dent = proc_create_data(tzdbg.stat[i].name,
+				0444, dent_dir,
+				&tzdbg_fops, &tzdbg.debug_tz[i]);
+		if (dent == NULL) {
+			dev_err(&pdev->dev, "TZ proc_create_data failed\n");
+			rc = -ENOMEM;
+			goto err;
+		}
+	}
+	tzdbg.disp_buf = kzalloc(max(debug_rw_buf_size,
+			tzdbg.hyp_debug_rw_buf_size), GFP_KERNEL);
+	if (tzdbg.disp_buf == NULL)
+		goto err;
+	platform_set_drvdata(pdev, dent_dir);
+	return 0;
+err:
+	if(dent_dir){
+		remove_proc_entry(TZDBG_DIR_NAME, NULL);
+	}
+
+	return rc;
+}
+
+static void tzdbg_procfs_exit(struct platform_device *pdev)
+{
+	struct proc_dir_entry           *dent_dir;
+
+	if (g_qsee_log) {
+		qtee_shmbridge_deregister(qseelog_shmbridge_handle);
+		dma_free_coherent(&pdev->dev, QSEE_LOG_BUF_SIZE,
+					 (void *)g_qsee_log, coh_pmem);
+	}
+	kzfree(tzdbg.disp_buf);
+	dent_dir = platform_get_drvdata(pdev);
+	if(dent_dir){
+		remove_proc_entry(TZDBG_DIR_NAME, NULL);
+	}
+}
+//else
+/*
 static int  tzdbgfs_init(struct platform_device *pdev)
 {
 	int rc = 0;
 	int i;
-	struct proc_dir_entry *dent_dir    = NULL;
-	struct proc_dir_entry *dent        = NULL;
+	struct dentry           *dent_dir;
+	struct dentry           *dent;
 
-	dent_dir = proc_mkdir("tzdbg", NULL);
+	dent_dir = debugfs_create_dir("tzdbg", NULL);
 	if (dent_dir == NULL) {
 		dev_err(&pdev->dev, "tzdbg debugfs_create_dir failed\n");
 		return -ENOMEM;
@@ -910,9 +995,9 @@ static int  tzdbgfs_init(struct platform_device *pdev)
 
 	for (i = 0; i < TZDBG_STATS_MAX; i++) {
 		tzdbg.debug_tz[i] = i;
-		dent = proc_create_data(tzdbg.stat[i].name,
-				0444, dent_dir
-				, &tzdbg_fops, &tzdbg.debug_tz[i]);
+		dent = debugfs_create_file_unsafe(tzdbg.stat[i].name,
+				0444, dent_dir,
+				&tzdbg.debug_tz[i], &tzdbg_fops);
 		if (dent == NULL) {
 			dev_err(&pdev->dev, "TZ debugfs_create_file failed\n");
 			rc = -ENOMEM;
@@ -926,14 +1011,14 @@ static int  tzdbgfs_init(struct platform_device *pdev)
 	platform_set_drvdata(pdev, dent_dir);
 	return 0;
 err:
-	proc_remove(dent_dir);
+	debugfs_remove_recursive(dent_dir);
 
 	return rc;
 }
 
 static void tzdbgfs_exit(struct platform_device *pdev)
 {
-	struct proc_dir_entry *dent_dir;
+	struct dentry           *dent_dir;
 
 	if (g_qsee_log) {
 		qtee_shmbridge_deregister(qseelog_shmbridge_handle);
@@ -942,9 +1027,10 @@ static void tzdbgfs_exit(struct platform_device *pdev)
 	}
 	kzfree(tzdbg.disp_buf);
 	dent_dir = platform_get_drvdata(pdev);
-	proc_remove(dent_dir);
+	debugfs_remove_recursive(dent_dir);
 }
-
+*/
+//#endif
 static int __update_hypdbg_base(struct platform_device *pdev,
 			void __iomem *virt_iobase)
 {
@@ -1089,10 +1175,12 @@ static int tz_log_probe(struct platform_device *pdev)
 
 	tzdbg.diag_buf = (struct tzdbg_t *)ptr;
 
-	pr_info("%s: Start init tz procfs\n", __func__);
-	if (tzdbgfs_init(pdev))
+//#ifdef OPLUS_FEATURE_SECURITY_COMMON
+	if (tzdbg_procfs_init(pdev))
+//else
+	//if (tzdbgfs_init(pdev))
+//#endif
 		goto err;
-	pr_info("%s: End init tz procfs\n", __func__);
 
 	tzdbg_register_qsee_log_buf(pdev);
 
@@ -1109,7 +1197,11 @@ static int tz_log_remove(struct platform_device *pdev)
 {
 	kzfree(tzdbg.diag_buf);
 	kzfree(tzdbg.hyp_diag_buf);
-	tzdbgfs_exit(pdev);
+	//#ifdef OPLUS_FEATURE_SECURITY_COMMON
+	tzdbg_procfs_exit(pdev);
+	//else
+	//tzdbgfs_exit(pdev);
+	//#endif
 
 	return 0;
 }

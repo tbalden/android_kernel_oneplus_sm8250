@@ -15,15 +15,25 @@
 #include <linux/seq_file.h>
 #include <linux/debugfs.h>
 #include <linux/pm_wakeirq.h>
-#include <linux/types.h>
+#include <linux/irq.h>
+#include <linux/irqdesc.h>
+#include <linux/wakeup_reason.h>
 #include <trace/events/power.h>
+#ifdef OPLUS_FEATURE_LOGKIT
+#include <linux/rtc.h>
+#include <soc/oplus/system/oplus_sync_time.h>
+#endif /* OPLUS_FEATURE_LOGKIT */
 #include <linux/irq.h>
 #include <linux/interrupt.h>
 #include <linux/irqdesc.h>
-#include <linux/wakeup_reason.h>
-#include <linux/pm_wakeup.h>
+
+#ifdef OPLUS_FEATURE_POWERINFO_STANDBY
+#include <soc/oplus/oplus_wakelock_profiler.h>
+#endif /* OPLUS_FEATURE_POWERINFO_STANDBY */
 
 #include "power.h"
+
+#include <linux/proc_fs.h>
 
 #ifndef CONFIG_SUSPEND
 suspend_state_t pm_suspend_target_state;
@@ -78,26 +88,6 @@ static struct wakeup_source deleted_ws = {
 	.lock =  __SPIN_LOCK_UNLOCKED(deleted_ws.lock),
 };
 
-#define WORK_TIMEOUT	(60*1000)
-static void ws_printk(struct work_struct *work);
-static DECLARE_DELAYED_WORK(ws_printk_work, ws_printk);
-
-/**
- * wakeup_source_prepare - Prepare a new wakeup source for initialization.
- * @ws: Wakeup source to prepare.
- * @name: Pointer to the name of the new wakeup source.
- *
- * Callers must ensure that the @name string won't be freed when @ws is still in
- * use.
- */
-void wakeup_source_prepare(struct wakeup_source *ws, const char *name)
-{
-	if (ws) {
-		memset(ws, 0, sizeof(*ws));
-		ws->name = name;
-	}
-}
-EXPORT_SYMBOL_GPL(wakeup_source_prepare);
 static DEFINE_IDA(wakeup_ida);
 
 /**
@@ -565,6 +555,10 @@ static void wakeup_source_activate(struct wakeup_source *ws)
 			"unregistered wakeup source\n"))
 		return;
 
+	#ifdef OPLUS_FEATURE_POWERINFO_STANDBY
+	wakeup_get_start_time();
+	#endif /* OPLUS_FEATURE_POWERINFO_STANDBY */
+
 	ws->active = true;
 	ws->active_count++;
 	ws->last_time = ktime_get();
@@ -706,8 +700,12 @@ static void wakeup_source_deactivate(struct wakeup_source *ws)
 	trace_wakeup_source_deactivate(ws->name, cec);
 
 	split_counters(&cnt, &inpr);
-	if (!inpr && waitqueue_active(&wakeup_count_wait_queue))
+	if (!inpr && waitqueue_active(&wakeup_count_wait_queue)) {
+		#ifdef OPLUS_FEATURE_POWERINFO_STANDBY
+		wakeup_get_end_hold_time();
+		#endif /* OPLUS_FEATURE_POWERINFO_STANDBY */
 		wake_up(&wakeup_count_wait_queue);
+	}
 }
 
 /**
@@ -881,7 +879,11 @@ void pm_print_active_wakeup_sources(void)
 	srcuidx = srcu_read_lock(&wakeup_srcu);
 	list_for_each_entry_rcu(ws, &wakeup_sources, entry) {
 		if (ws->active) {
+			#ifdef OPLUS_FEATURE_POWERINFO_STANDBY
 			pr_info("active wakeup source: %s\n", ws->name);
+			#else
+			pr_debug("active wakeup source: %s\n", ws->name);
+			#endif /* OPLUS_FEATURE_POWERINFO_STANDBY */
 			active = 1;
 		} else if (!active &&
 			   (!last_activity_ws ||
@@ -891,30 +893,45 @@ void pm_print_active_wakeup_sources(void)
 		}
 	}
 
-	if (!active && last_activity_ws)
+	if (!active && last_activity_ws) {
+		#ifdef OPLUS_FEATURE_POWERINFO_STANDBY
 		pr_info("last active wakeup source: %s\n",
 			last_activity_ws->name);
+		#else
+		pr_debug("last active wakeup source: %s\n",
+			last_activity_ws->name);
+		#endif /* OPLUS_FEATURE_POWERINFO_STANDBY */
+	}
 	srcu_read_unlock(&wakeup_srcu, srcuidx);
 }
 EXPORT_SYMBOL_GPL(pm_print_active_wakeup_sources);
 
-static void ws_printk(struct work_struct *work)
+#ifdef OPLUS_FEATURE_POWERINFO_STANDBY
+void get_ws_listhead(struct list_head **ws)
 {
-		pm_print_active_wakeup_sources();
-		queue_delayed_work(system_freezable_wq,
-		&ws_printk_work, msecs_to_jiffies(WORK_TIMEOUT));
+	if (ws)
+		*ws = &wakeup_sources;
 }
 
-void pm_print_active_wakeup_sources_queue(bool on)
+void wakeup_srcu_read_lock(int *srcuidx)
 {
-	if (on) {
-		queue_delayed_work(system_freezable_wq, &ws_printk_work,
-		msecs_to_jiffies(WORK_TIMEOUT));
-	} else {
-		cancel_delayed_work(&ws_printk_work);
-	}
+	*srcuidx = srcu_read_lock(&wakeup_srcu);
 }
-EXPORT_SYMBOL_GPL(pm_print_active_wakeup_sources_queue);
+
+void wakeup_srcu_read_unlock(int srcuidx)
+{
+	srcu_read_unlock(&wakeup_srcu, srcuidx);
+}
+
+bool ws_all_release(void)
+{
+	unsigned int cnt, inpr;
+
+	pr_info("Enter: %s\n", __func__);
+	split_counters(&cnt, &inpr);
+	return (!inpr) ? true : false;
+}
+#endif /* OPLUS_FEATURE_POWERINFO_STANDBY */
 
 /**
  * pm_wakeup_pending - Check if power transition in progress should be aborted.
@@ -928,6 +945,7 @@ bool pm_wakeup_pending(void)
 {
 	unsigned long flags;
 	bool ret = false;
+	char suspend_abort[MAX_SUSPEND_ABORT_LEN];
 
 	raw_spin_lock_irqsave(&events_lock, flags);
 	if (events_check_enabled) {
@@ -940,8 +958,16 @@ bool pm_wakeup_pending(void)
 	raw_spin_unlock_irqrestore(&events_lock, flags);
 
 	if (ret) {
+		#ifndef OPLUS_FEATURE_POWERINFO_STANDBY
 		pr_debug("PM: Wakeup pending, aborting suspend\n");
-		pm_print_active_wakeup_sources();
+		#else
+		pr_info("PM: Wakeup pending, aborting suspend\n");
+		wakeup_reasons_statics(IRQ_NAME_ABORT, WS_CNT_ABORT);
+		#endif /* OPLUS_FEATURE_POWERINFO_STANDBY */
+		pm_get_active_wakeup_sources(suspend_abort,
+					     MAX_SUSPEND_ABORT_LEN);
+		log_suspend_abort_reason(suspend_abort);
+		pr_info("PM: %s\n", suspend_abort);
 	}
 
 	return ret || atomic_read(&pm_abort_suspend) > 0;
@@ -968,22 +994,24 @@ void pm_wakeup_clear(bool reset)
 
 void pm_system_irq_wakeup(unsigned int irq_number)
 {
-	struct irq_desc *desc;
-	const char *name = "null";
-
 	if (pm_wakeup_irq == 0) {
-		if (msm_show_resume_irq_mask) {
-			desc = irq_to_desc(irq_number);
-			if (desc == NULL)
-				name = "stray irq";
-			else if (desc->action && desc->action->name)
-				name = desc->action->name;
+		struct irq_desc *desc;
+		const char *name = "null";
 
-			log_wakeup_reason(irq_number);
-			pr_warn("%s: %d triggered %s\n", __func__,
-					irq_number, name);
+		desc = irq_to_desc(irq_number);
+		if (desc == NULL)
+			name = "stray irq";
+		else if (desc->action && desc->action->name)
+			name = desc->action->name;
 
-		}
+		log_irq_wakeup_reason(irq_number);
+		pr_warn("%s: %d triggered %s\n", __func__, irq_number, name);
+
+		#ifdef OPLUS_FEATURE_POWERINFO_STANDBY
+		pr_info("%s: resume caused by irq=%d, name=%s\n", __func__, irq_number, name);
+		wakeup_reasons_statics(name, WS_CNT_POWERKEY|WS_CNT_RTCALARM);
+		#endif /* OPLUS_FEATURE_POWERINFO_STANDBY */
+
 		pm_wakeup_irq = irq_number;
 		pm_system_wakeup();
 	}
@@ -1207,12 +1235,22 @@ static const struct file_operations wakeup_sources_stats_fops = {
 	.read = seq_read,
 	.llseek = seq_lseek,
 	.release = seq_release_private,
+#ifdef OPLUS_FEATURE_LOGKIT
+	.write          = watchdog_write,
+#endif /* OPLUS_FEATURE_LOGKIT */
 };
 
 static int __init wakeup_sources_debugfs_init(void)
 {
+	#ifndef OPLUS_FEATURE_LOGKIT
 	wakeup_sources_stats_dentry = debugfs_create_file("wakeup_sources",
 			S_IRUGO, NULL, NULL, &wakeup_sources_stats_fops);
+	#else /* OPLUS_FEATURE_LOGKIT */
+	wakeup_sources_stats_dentry = debugfs_create_file("wakeup_sources",
+			S_IRUGO| S_IWUGO, NULL, NULL, &wakeup_sources_stats_fops);
+	#endif /* OPLUS_FEATURE_LOGKIT */
+
+	proc_create_data("wakeup_sources", 0444, NULL, &wakeup_sources_stats_fops, NULL);
 	return 0;
 }
 

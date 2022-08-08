@@ -14,6 +14,7 @@
 #include <linux/uprobes.h>
 #include <linux/page-flags-layout.h>
 #include <linux/workqueue.h>
+#include <linux/android_kabi.h>
 
 #include <asm/mmu.h>
 
@@ -204,9 +205,6 @@ struct page {
 #ifdef LAST_CPUPID_NOT_IN_PAGE_FLAGS
 	int _last_cpupid;
 #endif
-#if defined(CONFIG_MEMPLUS) && !(defined(CONFIG_PAGE_EXTENSION) && defined(CONFIG_PAGE_OWNER_ENABLE_DEFAULT))
-	int8_t next_event;
-#endif
 } _struct_page_alignment;
 
 #define PAGE_FRAG_CACHE_MAX_SIZE	__ALIGN_MASK(32768, ~PAGE_MASK)
@@ -294,12 +292,6 @@ struct vm_area_struct {
 	struct mm_struct *vm_mm;	/* The address space we belong to. */
 	pgprot_t vm_page_prot;		/* Access permissions of this VMA. */
 	unsigned long vm_flags;		/* Flags, see mm.h. */
-#ifdef CONFIG_VM_FRAGMENT_MONITOR
-	unsigned long rb_glfragment_gap;
-#endif
-#ifdef CONFIG_MEMPLUS
-	unsigned int memplus_flags;
-#endif
 
 	/*
 	 * For areas with an address space and backing store,
@@ -345,9 +337,14 @@ struct vm_area_struct {
 #endif
 	struct vm_userfaultfd_ctx vm_userfaultfd_ctx;
 #ifdef CONFIG_SPECULATIVE_PAGE_FAULT
-	seqcount_t vm_sequence;
+	seqcount_t vm_sequence;		/* Speculative page fault field */
 	atomic_t vm_ref_count;		/* see vma_get(), vma_put() */
 #endif
+
+	ANDROID_KABI_RESERVE(1);
+	ANDROID_KABI_RESERVE(2);
+	ANDROID_KABI_RESERVE(3);
+	ANDROID_KABI_RESERVE(4);
 } __randomize_layout;
 
 struct core_thread {
@@ -368,7 +365,7 @@ struct mm_struct {
 		struct rb_root mm_rb;
 		u64 vmacache_seqnum;                   /* per-thread vmacache */
 #ifdef CONFIG_SPECULATIVE_PAGE_FAULT
-		rwlock_t mm_rb_lock;
+		rwlock_t mm_rb_lock;	/* Speculative page fault field */
 #endif
 #ifdef CONFIG_MMU
 		unsigned long (*get_unmapped_area) (struct file *filp,
@@ -514,14 +511,24 @@ struct mm_struct {
 		atomic_long_t hugetlb_usage;
 #endif
 		struct work_struct async_put_work;
-
+#if defined(OPLUS_FEATURE_VIRTUAL_RESERVE_MEMORY) && defined(CONFIG_VIRTUAL_RESERVE_MEMORY)
+		struct vm_area_struct *reserve_vma;
+		struct vm_area_struct *reserve_mmap;
+		struct rb_root reserve_mm_rb;
+		unsigned long reserve_highest_vm_end;
+		int reserve_map_count;
+		int do_reserve_mmap;
+		bool vm_search_two_way;
+#endif
 #if IS_ENABLED(CONFIG_HMM)
 		/* HMM needs to track a few things per mm */
 		struct hmm *hmm;
 #endif
+#if defined(OPLUS_FEATURE_VIRTUAL_RESERVE_MEMORY) && defined(CONFIG_VIRTUAL_RESERVE_MEMORY)
+		unsigned long va_feature_rnd;
 		unsigned int zygoteheap_in_MB;
 		int va_feature;
-		unsigned long va_feature_rnd;
+#endif
 	} __randomize_layout;
 
 	/*

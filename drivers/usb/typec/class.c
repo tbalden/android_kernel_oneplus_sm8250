@@ -1170,6 +1170,10 @@ static ssize_t power_operation_mode_show(struct device *dev,
 {
 	struct typec_port *port = to_typec_port(dev);
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	if(port->pwr_opmode < TYPEC_PWR_MODE_USB || port->pwr_opmode > TYPEC_PWR_MODE_PD)
+		return sprintf(buf, "pwr_opmode_index_error");
+#endif
 	return sprintf(buf, "%s\n", typec_pwr_opmodes[port->pwr_opmode]);
 }
 static DEVICE_ATTR_RO(power_operation_mode);
@@ -1378,7 +1382,8 @@ void typec_set_pwr_opmode(struct typec_port *port,
 {
 	struct device *partner_dev;
 
-	if (port->pwr_opmode == opmode)
+	if ((port->pwr_opmode == opmode) || (opmode < TYPEC_PWR_MODE_USB) ||
+						(opmode > TYPEC_PWR_MODE_MAX))
 		return;
 
 	port->pwr_opmode = opmode;

@@ -164,7 +164,38 @@ static int _copy_sysprop_to_user(struct cvp_kmd_arg *kp,
 	return 0;
 
 }
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+static void _set_deprecate_bitmask(struct cvp_kmd_arg *kp,
+			struct msm_cvp_inst *inst)
+{
+	dprintk(CVP_INFO, "%s: kp->type = %#x\n", __func__, kp->type);
 
+	switch (kp->type) {
+	case CVP_KMD_HFI_DFS_FRAME_CMD:
+	{
+		set_bit(DFS_BIT_OFFSET, &inst->deprecate_bitmask);
+		break;
+	}
+	case CVP_KMD_HFI_DME_FRAME_CMD:
+	{
+		set_bit(DME_BIT_OFFSET, &inst->deprecate_bitmask);
+		break;
+	}
+	case CVP_KMD_HFI_DME_FRAME_FENCE_CMD:
+	{
+		set_bit(DME_BIT_OFFSET, &inst->deprecate_bitmask);
+		break;
+	}
+	case CVP_KMD_HFI_FD_FRAME_CMD:
+	{
+		set_bit(FD_BIT_OFFSET, &inst->deprecate_bitmask);
+		break;
+	}
+	default:
+		break;
+	}
+}
+#endif
 static void print_hfi_short(struct cvp_kmd_arg __user *up)
 {
 	struct cvp_kmd_hfi_packet *pkt;
@@ -230,7 +261,9 @@ static int convert_from_user(struct cvp_kmd_arg *kp,
 
 	if (get_user(kp->type, &up->type))
 		return -EFAULT;
-
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+	_set_deprecate_bitmask(kp, inst);
+#endif
 	if (get_user(kp->buf_offset, &up->buf_offset) ||
 		get_user(kp->buf_num, &up->buf_num))
 		return -EFAULT;
@@ -303,7 +336,31 @@ static int convert_from_user(struct cvp_kmd_arg *kp,
 				return -EFAULT;
 		break;
 	}
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+case CVP_KMD_HFI_SEND_CMD:
+	{
+		struct cvp_kmd_send_cmd *k, *u;
+
+		k = &kp->data.send_cmd;
+		u = &up->data.send_cmd;
+		if (get_user(k->cmd_address_fd, &u->cmd_address_fd) ||
+			get_user(k->cmd_size, &u->cmd_size))
+			return -EFAULT;
+		for (i = 0; i < 10; i++)
+			if (get_user(k->reserved[i], &u->reserved[i]))
+				return -EFAULT;
+		break;
+	}
+#endif
 	case CVP_KMD_SEND_CMD_PKT:
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+	case CVP_KMD_HFI_DFS_CONFIG_CMD:
+	case CVP_KMD_HFI_DFS_FRAME_CMD:
+	case CVP_KMD_HFI_DME_CONFIG_CMD:
+	case CVP_KMD_HFI_DME_FRAME_CMD:
+	case CVP_KMD_HFI_PERSIST_CMD:
+	case CVP_KMD_HFI_FD_FRAME_CMD:
+#endif
 	{
 		if (_get_pkt_hdr_from_user(up, &pkt_hdr)) {
 			dprintk(CVP_ERR, "Invalid syscall: %x, %x, %x\n",
@@ -315,6 +372,9 @@ static int convert_from_user(struct cvp_kmd_arg *kp,
 		break;
 	}
 	case CVP_KMD_SEND_FENCE_CMD_PKT:
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+	case CVP_KMD_HFI_DME_FRAME_FENCE_CMD:
+#endif
 	{
 		if (_get_fence_pkt_hdr_from_user(up, &pkt_hdr)) {
 			dprintk(CVP_ERR, "Invalid syscall: %x, %x, %x\n",
@@ -332,10 +392,17 @@ static int convert_from_user(struct cvp_kmd_arg *kp,
 				pkt_hdr.packet_type);
 			return -EFAULT;
 		}
-
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+		set_feature_bitmask(pkt_idx, &inst->deprecate_bitmask);
+#endif
 		rc = _copy_fence_pkt_from_user(kp, up, (pkt_hdr.size >> 2));
 		break;
 	}
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+	case CVP_KMD_HFI_DFS_FRAME_CMD_RESPONSE:
+	case CVP_KMD_HFI_DME_FRAME_CMD_RESPONSE:
+	case CVP_KMD_HFI_PERSIST_CMD_RESPONSE:
+#endif
 	case CVP_KMD_RECEIVE_MSG_PKT:
 		break;
 	case CVP_KMD_SESSION_CONTROL:
@@ -470,7 +537,37 @@ static int convert_to_user(struct cvp_kmd_arg *kp, unsigned long arg)
 				return -EFAULT;
 		break;
 	}
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+	case CVP_KMD_HFI_SEND_CMD:
+	{
+		struct cvp_kmd_send_cmd *k, *u;
+
+		dprintk(CVP_DBG, "%s: CVP_KMD_HFI_SEND_CMD\n",
+					__func__);
+
+		k = &kp->data.send_cmd;
+		u = &up->data.send_cmd;
+		if (put_user(k->cmd_address_fd, &u->cmd_address_fd) ||
+			put_user(k->cmd_size, &u->cmd_size))
+			return -EFAULT;
+		for (i = 0; i < 10; i++)
+			if (put_user(k->reserved[i], &u->reserved[i]))
+				return -EFAULT;
+		break;
+	}
+#endif
 	case CVP_KMD_SEND_CMD_PKT:
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+	case CVP_KMD_HFI_DFS_CONFIG_CMD:
+	case CVP_KMD_HFI_DFS_FRAME_CMD:
+	case CVP_KMD_HFI_DFS_FRAME_CMD_RESPONSE:
+	case CVP_KMD_HFI_DME_CONFIG_CMD:
+	case CVP_KMD_HFI_DME_FRAME_CMD:
+	case CVP_KMD_HFI_DME_FRAME_CMD_RESPONSE:
+	case CVP_KMD_HFI_PERSIST_CMD:
+	case CVP_KMD_HFI_PERSIST_CMD_RESPONSE:
+	case CVP_KMD_HFI_FD_FRAME_CMD:
+#endif
 	{
 		if (_get_pkt_hdr_from_user(up, &pkt_hdr))
 			return -EFAULT;
@@ -481,6 +578,9 @@ static int convert_to_user(struct cvp_kmd_arg *kp, unsigned long arg)
 		break;
 	}
 	case CVP_KMD_SEND_FENCE_CMD_PKT:
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+	case CVP_KMD_HFI_DME_FRAME_FENCE_CMD:
+#endif
 	{
 		if (_get_fence_pkt_hdr_from_user(up, &pkt_hdr))
 			return -EFAULT;

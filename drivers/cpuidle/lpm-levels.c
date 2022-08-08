@@ -43,9 +43,6 @@
 #include "../clk/clk.h"
 #define CREATE_TRACE_POINTS
 #include <trace/events/trace_msm_low_power.h>
-#ifdef CONFIG_CONTROL_CENTER
-#include <oneplus/control_center/control_center_helper.h>
-#endif
 
 #define SCLK_HZ (32768)
 #define PSCI_POWER_STATE(reset) (reset << 30)
@@ -127,12 +124,6 @@ module_param_named(print_parsed_dt, print_parsed_dt, bool, 0664);
 
 static bool sleep_disabled;
 module_param_named(sleep_disabled, sleep_disabled, bool, 0664);
-
-void msm_cpuidle_set_sleep_disable(bool disable)
-{
-	sleep_disabled = disable;
-	pr_info("%s:sleep_disabled=%d\n", __func__, disable);
-}
 
 /**
  * msm_cpuidle_get_deep_idle_latency - Get deep idle latency value
@@ -661,11 +652,6 @@ static inline bool lpm_disallowed(s64 sleep_us, int cpu, struct lpm_cpu *pm_cpu)
 {
 	uint64_t bias_time = 0;
 
-#ifdef CONFIG_CONTROL_CENTER
-	uint64_t tb_block_ts;
-	int tb_ccdm_idx = cpu + CCDM_TB_CPU_0_IDLE_BLOCK;
-#endif
-
 	if (cpu_isolated(cpu))
 		goto out;
 
@@ -678,16 +664,7 @@ static inline bool lpm_disallowed(s64 sleep_us, int cpu, struct lpm_cpu *pm_cpu)
 		return true;
 	}
 
-#ifdef CONFIG_CONTROL_CENTER
-	tb_block_ts = ccdm_get_hint(tb_ccdm_idx);
-	if (!time_after64(get_jiffies_64(), tb_block_ts))
-		return true;
-#endif
-
 out:
-#ifdef CONFIG_CONTROL_CENTER
-	ccdm_update_hint_1(tb_ccdm_idx, ULLONG_MAX);
-#endif
 	if (sleep_us < 0)
 		return true;
 
@@ -1427,7 +1404,7 @@ static int lpm_cpuidle_select(struct cpuidle_driver *drv,
 	return cpu_power_select(dev, cpu);
 }
 
-void update_ipi_history(int cpu)
+static void update_ipi_history(int cpu)
 {
 	struct ipi_history *history = &per_cpu(cpu_ipi_history, cpu);
 	ktime_t now = ktime_get();
@@ -1863,6 +1840,8 @@ static int lpm_probe(struct platform_device *pdev)
 		pr_err("Failed to create cluster level nodes\n");
 		goto failed;
 	}
+
+	set_update_ipi_history_callback(update_ipi_history);
 
 	/* Add lpm_debug to Minidump*/
 	strlcpy(md_entry.name, "KLPMDEBUG", sizeof(md_entry.name));

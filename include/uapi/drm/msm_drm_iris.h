@@ -1,9 +1,9 @@
-/* SPDX-License-Identifier: GPL-2.0-only
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ *  Copyright (c) 2015-2019, The Linux Foundataion. All rights reserved.
+ *  Copyright (c) 2017-2020, Pixelworks, Inc.
  *
- * Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
- * Copyright (c) 2017-2020, Pixelworks, Inc.
- *
- * These files contain modifications made by Pixelworks, Inc., in 2019-2020.
+ *  These files contain modifications made by Pixelworks, Inc., in 2019-2020.
  */
 
 #ifndef __MSM_DRM_IRIS_H__
@@ -53,14 +53,14 @@ struct msmfb_iris_ambient_info {
 	uint32_t ambient_bl_ratio;
 	void *lut_lut2_payload;
 };
+
 struct msmfb_iris_maxcll_info {
-	uint32_t mMAXCLL;
-	void *lut_luty_payload;
-	void *lut_lutuv_payload;
-	};
-#define DRM_IOCTL_MSM_IRIS_OPERATE_CONF \
-	DRM_IOW(DRM_COMMAND_BASE + DRM_MSM_IRIS_OPERATE_CONF, struct msm_iris_operate_value)
-#define DRM_IOCTL_MSM_IRIS_OPERATE_TOOL \
-	DRM_IOW(DRM_COMMAND_BASE + DRM_MSM_IRIS_OPERATE_TOOL, struct msm_iris_operate_value)
+    uint32_t mMAXCLL;
+    void *lut_luty_payload;
+    void *lut_lutuv_payload;
+};
+
+#define DRM_IOCTL_MSM_IRIS_OPERATE_CONF     DRM_IOW (DRM_COMMAND_BASE + DRM_MSM_IRIS_OPERATE_CONF, struct msm_iris_operate_value)
+#define DRM_IOCTL_MSM_IRIS_OPERATE_TOOL     DRM_IOW (DRM_COMMAND_BASE + DRM_MSM_IRIS_OPERATE_TOOL, struct msm_iris_operate_value)
 
 #endif /* __MSM_DRM_IRIS_H__ */

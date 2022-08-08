@@ -46,6 +46,16 @@
 #include <uapi/linux/dma-buf.h>
 #include <uapi/linux/magic.h>
 
+#ifdef OPLUS_FEATURE_LOWMEM_DBG
+/* Add for dump memory */
+/* usage when lowmmem occurs. */
+#include <soc/oplus/lowmem_dbg.h>
+#endif /* OPLUS_FEATURE_LOWMEM_DBG */
+
+#if defined(OPLUS_FEATURE_PERFORMANCE) && defined(CONFIG_PROC_FS)
+#include <linux/proc_fs.h>
+#endif
+
 static atomic_long_t name_counter;
 
 static inline int is_dma_buf_file(struct file *);
@@ -396,20 +406,27 @@ static long dma_buf_set_name(struct dma_buf *dmabuf, const char __user *buf)
 		return PTR_ERR(name);
 
 	mutex_lock(&dmabuf->lock);
+	spin_lock(&dmabuf->name_lock);
 	if (!list_empty(&dmabuf->attachments)) {
 		ret = -EBUSY;
 		kfree(name);
 		goto out_unlock;
 	}
-	spin_lock(&dmabuf->name_lock);
 	kfree(dmabuf->name);
 	dmabuf->name = name;
-	spin_unlock(&dmabuf->name_lock);
 
 out_unlock:
+	spin_unlock(&dmabuf->name_lock);
 	mutex_unlock(&dmabuf->lock);
 	return ret;
 }
+
+static int dma_buf_begin_cpu_access_umapped(struct dma_buf *dmabuf,
+					    enum dma_data_direction direction);
+
+
+static int dma_buf_end_cpu_access_umapped(struct dma_buf *dmabuf,
+					  enum dma_data_direction direction);
 
 static long dma_buf_ioctl(struct file *file,
 			  unsigned int cmd, unsigned long arg)
@@ -499,6 +516,15 @@ static inline int is_dma_buf_file(struct file *file)
 {
 	return file->f_op == &dma_buf_fops;
 }
+
+#ifdef OPLUS_FEATURE_LOWMEM_DBG
+/* Add for dump memory */
+/* usage when lowmmem occurs. */
+inline int oplus_is_dma_buf_file(struct file *file)
+{
+       return is_dma_buf_file(file);
+}
+#endif /* OPLUS_FEATURE_LOWMEM_DBG */
 
 static struct file *dma_buf_getfile(struct dma_buf *dmabuf, int flags)
 {
@@ -621,7 +647,6 @@ struct dma_buf *dma_buf_export(const struct dma_buf_export_info *exp_info)
 	dmabuf->size = exp_info->size;
 	dmabuf->exp_name = exp_info->exp_name;
 	dmabuf->owner = exp_info->owner;
-	spin_lock_init(&dmabuf->name_lock);
 	init_waitqueue_head(&dmabuf->poll);
 	dmabuf->cb_excl.poll = dmabuf->cb_shared.poll = &dmabuf->poll;
 	dmabuf->cb_excl.active = dmabuf->cb_shared.active = 0;
@@ -646,6 +671,7 @@ struct dma_buf *dma_buf_export(const struct dma_buf_export_info *exp_info)
 	dmabuf->file = file;
 
 	mutex_init(&dmabuf->lock);
+	spin_lock_init(&dmabuf->name_lock);
 	INIT_LIST_HEAD(&dmabuf->attachments);
 
 	dma_buf_ref_init(dmabuf);
@@ -1049,6 +1075,7 @@ static int dma_buf_begin_cpu_access_umapped(struct dma_buf *dmabuf,
 
 	return ret;
 }
+
 int dma_buf_begin_cpu_access_partial(struct dma_buf *dmabuf,
 				     enum dma_data_direction direction,
 				     unsigned int offset, unsigned int len)
@@ -1071,7 +1098,7 @@ int dma_buf_begin_cpu_access_partial(struct dma_buf *dmabuf,
 
 	return ret;
 }
-EXPORT_SYMBOL(dma_buf_begin_cpu_access_partial);
+EXPORT_SYMBOL_GPL(dma_buf_begin_cpu_access_partial);
 
 /**
  * dma_buf_end_cpu_access - Must be called after accessing a dma_buf from the
@@ -1099,7 +1126,7 @@ int dma_buf_end_cpu_access(struct dma_buf *dmabuf,
 }
 EXPORT_SYMBOL_GPL(dma_buf_end_cpu_access);
 
-int dma_buf_end_cpu_access_umapped(struct dma_buf *dmabuf,
+static int dma_buf_end_cpu_access_umapped(struct dma_buf *dmabuf,
 			   enum dma_data_direction direction)
 {
 	int ret = 0;
@@ -1126,7 +1153,7 @@ int dma_buf_end_cpu_access_partial(struct dma_buf *dmabuf,
 
 	return ret;
 }
-EXPORT_SYMBOL(dma_buf_end_cpu_access_partial);
+EXPORT_SYMBOL_GPL(dma_buf_end_cpu_access_partial);
 
 /**
  * dma_buf_kmap - Map a page of the buffer object into kernel address space. The
@@ -1293,7 +1320,7 @@ int dma_buf_get_flags(struct dma_buf *dmabuf, unsigned long *flags)
 {
 	int ret = 0;
 
-	if (WARN_ON(!dmabuf))
+	if (WARN_ON(!dmabuf) || !flags)
 		return -EINVAL;
 
 	if (dmabuf->ops->get_flags)
@@ -1301,9 +1328,21 @@ int dma_buf_get_flags(struct dma_buf *dmabuf, unsigned long *flags)
 
 	return ret;
 }
-EXPORT_SYMBOL(dma_buf_get_flags);
+EXPORT_SYMBOL_GPL(dma_buf_get_flags);
 
-#ifdef CONFIG_DEBUG_FS
+int dma_buf_get_uuid(struct dma_buf *dmabuf, uuid_t *uuid)
+{
+	if (WARN_ON(!dmabuf) || !uuid)
+		return -EINVAL;
+
+	if (!dmabuf->ops->get_uuid)
+		return -ENODEV;
+
+	return dmabuf->ops->get_uuid(dmabuf, uuid);
+}
+EXPORT_SYMBOL_GPL(dma_buf_get_uuid);
+
+#if defined(CONFIG_DEBUG_FS) || (defined(OPLUS_FEATURE_PERFORMANCE) && defined(CONFIG_PROC_FS))
 static int dma_buf_debug_show(struct seq_file *s, void *unused)
 {
 	int ret;
@@ -1544,6 +1583,7 @@ static const struct file_operations dma_procs_debug_fops = {
 	.release        = single_release
 };
 
+#ifdef CONFIG_DEBUG_FS
 static struct dentry *dma_buf_debugfs_dir;
 
 static int dma_buf_init_debugfs(void)
@@ -1584,6 +1624,64 @@ static void dma_buf_uninit_debugfs(void)
 {
 	debugfs_remove_recursive(dma_buf_debugfs_dir);
 }
+#else /* CONFIG_DEBUG_FS */
+static inline int dma_buf_init_debugfs(void)
+{
+	return 0;
+}
+static inline void dma_buf_uninit_debugfs(void)
+{
+}
+#endif /* CONFIG_DEBUG_FS */
+
+#if defined(OPLUS_FEATURE_PERFORMANCE) && defined(CONFIG_PROC_FS)
+static struct proc_dir_entry *dma_buf_procfs_root;
+
+int dma_buf_init_procfs(void)
+{
+	struct proc_dir_entry *p;
+	int err = 0;
+
+	p = proc_mkdir("dma_buf", NULL);
+	if (IS_ERR(p))
+		return PTR_ERR(p);
+
+	dma_buf_procfs_root = p;
+
+	p = proc_create_data("bufinfo",
+			     S_IFREG | 0664,
+			     dma_buf_procfs_root,
+			     &dma_buf_debug_fops,
+			     NULL);
+	if (IS_ERR(p)) {
+		pr_debug("dma_buf: procfs: failed to create node bufinfo\n");
+		proc_remove(dma_buf_procfs_root);
+		dma_buf_procfs_root = NULL;
+		err = PTR_ERR(dma_buf_procfs_root);
+		return err;
+	}
+
+	p = proc_create_data("dmaprocs",
+			     S_IFREG | 0664,
+			     dma_buf_procfs_root,
+			     &dma_procs_debug_fops,
+			     NULL);
+	if (IS_ERR(p)) {
+		pr_debug("dma_buf: procfs: failed to create node dmaprocs\n");
+		proc_remove(dma_buf_procfs_root);
+		dma_buf_procfs_root = NULL;
+		err = PTR_ERR(dma_buf_procfs_root);
+	}
+
+	return err;
+}
+
+void dma_buf_uninit_procfs(void)
+{
+	proc_remove(dma_buf_procfs_root);
+}
+#endif /* defined(OPLUS_FEATURE_PERFORMANCE) && defined(CONFIG_PROC_FS) */
+
 #else
 static inline int dma_buf_init_debugfs(void)
 {
@@ -1603,6 +1701,9 @@ static int __init dma_buf_init(void)
 	mutex_init(&db_list.lock);
 	INIT_LIST_HEAD(&db_list.head);
 	dma_buf_init_debugfs();
+#if defined(OPLUS_FEATURE_PERFORMANCE) && defined(CONFIG_PROC_FS)
+	dma_buf_init_procfs();
+#endif
 	return 0;
 }
 subsys_initcall(dma_buf_init);
@@ -1611,5 +1712,8 @@ static void __exit dma_buf_deinit(void)
 {
 	dma_buf_uninit_debugfs();
 	kern_unmount(dma_buf_mnt);
+#if defined(OPLUS_FEATURE_PERFORMANCE) && defined(CONFIG_PROC_FS)
+	dma_buf_uninit_procfs();
+#endif
 }
 __exitcall(dma_buf_deinit);

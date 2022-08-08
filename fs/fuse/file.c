@@ -7,7 +7,6 @@
 */
 
 #include "fuse_i.h"
-#include "fuse_shortcircuit.h"
 
 #include <linux/pagemap.h>
 #include <linux/slab.h>
@@ -19,25 +18,20 @@
 #include <linux/swap.h>
 #include <linux/falloc.h>
 #include <linux/uio.h>
+#include <linux/fs.h>
 
 static const struct file_operations fuse_direct_io_file_operations;
-
 static int fuse_send_open(struct fuse_conn *fc, u64 nodeid, struct file *file,
-			  int opcode, struct fuse_open_out *outargp,
-			  struct file **lower_file)
+			  int opcode, struct fuse_open_out *outargp)
 {
-	ssize_t ret;
 	struct fuse_open_in inarg;
 	FUSE_ARGS(args);
-	char *iname = NULL;
 
 	memset(&inarg, 0, sizeof(inarg));
 	inarg.flags = file->f_flags & ~(O_CREAT | O_EXCL | O_NOCTTY);
+
 	if (!fc->atomic_o_trunc)
 		inarg.flags &= ~O_TRUNC;
-	if (fc->writeback_cache)
-		inarg.flags &= ~O_APPEND;
-
 	args.in.h.opcode = opcode;
 	args.in.h.nodeid = nodeid;
 	args.in.numargs = 1;
@@ -47,16 +41,7 @@ static int fuse_send_open(struct fuse_conn *fc, u64 nodeid, struct file *file,
 	args.out.args[0].size = sizeof(*outargp);
 	args.out.args[0].value = outargp;
 
-	if (opcode == FUSE_OPEN)
-		iname = inode_name(file_inode(file));
-	args.iname = iname;
-
-	ret = fuse_simple_request(fc, &args);
-	if (args.iname)
-		__putname(args.iname);
-	if (args.private_lower_rw_file != NULL)
-		*lower_file = args.private_lower_rw_file;
-	return ret;
+	return fuse_simple_request(fc, &args);
 }
 
 struct fuse_file *fuse_file_alloc(struct fuse_conn *fc)
@@ -67,7 +52,6 @@ struct fuse_file *fuse_file_alloc(struct fuse_conn *fc)
 	if (unlikely(!ff))
 		return NULL;
 
-	ff->rw_lower_file = NULL;
 	ff->fc = fc;
 	ff->reserved_req = fuse_request_alloc(0);
 	if (unlikely(!ff->reserved_req)) {
@@ -148,12 +132,11 @@ int fuse_do_open(struct fuse_conn *fc, u64 nodeid, struct file *file,
 		struct fuse_open_out outarg;
 		int err;
 
-		err = fuse_send_open(fc, nodeid, file, opcode, &outarg,
-				&(ff->rw_lower_file));
+		err = fuse_send_open(fc, nodeid, file, opcode, &outarg);
 		if (!err) {
 			ff->fh = outarg.fh;
 			ff->open_flags = outarg.open_flags;
-
+			fuse_passthrough_setup(fc, ff, &outarg);
 		} else if (err != -ENOSYS || isdir) {
 			fuse_file_free(ff);
 			return err;
@@ -275,7 +258,8 @@ void fuse_release_common(struct file *file, bool isdir)
 	struct fuse_req *req = ff->reserved_req;
 	int opcode = isdir ? FUSE_RELEASEDIR : FUSE_RELEASE;
 
-	fuse_shortcircuit_release(ff);
+	fuse_passthrough_release(&ff->passthrough);
+
 	fuse_prepare_release(ff, file->f_flags, opcode);
 
 	if (ff->flock) {
@@ -943,9 +927,9 @@ out:
 
 static ssize_t fuse_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 {
-	ssize_t ret_val;
 	struct inode *inode = iocb->ki_filp->f_mapping->host;
 	struct fuse_conn *fc = get_fuse_conn(inode);
+
 	struct fuse_file *ff = iocb->ki_filp->private_data;
 
 	/*
@@ -961,12 +945,11 @@ static ssize_t fuse_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 			return err;
 	}
 
-	if (ff && ff->rw_lower_file)
-		ret_val = fuse_shortcircuit_read_iter(iocb, to);
+	if (ff && ff->passthrough.filp)
+		return fuse_passthrough_read_iter(iocb, to);
 	else
-		ret_val = generic_file_read_iter(iocb, to);
+		return generic_file_read_iter(iocb, to);
 
-	return ret_val;
 }
 
 static void fuse_write_fill(struct fuse_req *req, struct fuse_file *ff,
@@ -1211,13 +1194,13 @@ static ssize_t fuse_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	ssize_t err;
 	loff_t endbyte = 0;
 
-	if (ff && ff->rw_lower_file) {
+	if (ff && ff->passthrough.filp) {
 		/* Update size (EOF optimization) and mode (SUID clearing) */
 		err = fuse_update_attributes(mapping->host, file);
 		if (err)
 			return err;
 
-		return fuse_shortcircuit_write_iter(iocb, from);
+		return fuse_passthrough_write_iter(iocb, from);
 	}
 
 	if (get_fuse_conn(inode)->writeback_cache) {
@@ -2119,6 +2102,11 @@ static const struct vm_operations_struct fuse_file_vm_ops = {
 
 static int fuse_file_mmap(struct file *file, struct vm_area_struct *vma)
 {
+	struct fuse_file *ff = file->private_data;
+
+	if (ff->passthrough.filp)
+		return fuse_passthrough_mmap(file, vma);
+
 	if ((vma->vm_flags & VM_SHARED) && (vma->vm_flags & VM_MAYWRITE))
 		fuse_link_write_file(file);
 
@@ -2571,7 +2559,16 @@ long fuse_do_ioctl(struct file *file, unsigned int cmd, unsigned long arg,
 		struct iovec *iov = iov_page;
 
 		iov->iov_base = (void __user *)arg;
-		iov->iov_len = _IOC_SIZE(cmd);
+
+		switch (cmd) {
+		case FS_IOC_GETFLAGS:
+		case FS_IOC_SETFLAGS:
+			iov->iov_len = sizeof(int);
+			break;
+		default:
+			iov->iov_len = _IOC_SIZE(cmd);
+			break;
+		}
 
 		if (_IOC_DIR(cmd) & _IOC_WRITE) {
 			in_iov = iov;

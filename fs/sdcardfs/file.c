@@ -246,8 +246,10 @@ static int sdcardfs_open(struct inode *inode, struct file *file)
 	struct dentry *parent = dget_parent(dentry);
 	struct sdcardfs_sb_info *sbi = SDCARDFS_SB(dentry->d_sb);
 	const struct cred *saved_cred = NULL;
+#ifdef CONFIG_OPLUS_FEATURE_FUSE_FS_SHORTCIRCUIT
 	struct fuse_package *fp = current->fpack;
 	char *iname;
+#endif /* CONFIG_OPLUS_FEATURE_FUSE_FS_SHORTCIRCUIT */
 
 	/* don't open unhashed/deleted files */
 	if (d_unhashed(dentry)) {
@@ -267,7 +269,6 @@ static int sdcardfs_open(struct inode *inode, struct file *file)
 		goto out_err;
 	}
 
-	file->f_mode |= FMODE_NONMAPPABLE;
 	file->private_data =
 		kzalloc(sizeof(struct sdcardfs_file_info), GFP_KERNEL);
 	if (!SDCARDFS_F(file)) {
@@ -288,6 +289,7 @@ static int sdcardfs_open(struct inode *inode, struct file *file)
 		}
 	} else {
 		sdcardfs_set_lower_file(file, lower_file);
+#ifdef CONFIG_OPLUS_FEATURE_FUSE_FS_SHORTCIRCUIT
 		if (!err && fp && fp->fuse_open_req && !fp->filp && fp->iname) {
 			iname = inode_name(inode);
 			if (iname && !strcasecmp(iname, fp->iname)) {
@@ -297,6 +299,7 @@ static int sdcardfs_open(struct inode *inode, struct file *file)
 			if (iname)
 				__putname(iname);
 		}
+#endif /* CONFIG_OPLUS_FEATURE_FUSE_FS_SHORTCIRCUIT */
 	}
 
 	if (err)
@@ -370,11 +373,6 @@ static int sdcardfs_fasync(int fd, struct file *file, int flag)
 		err = lower_file->f_op->fasync(fd, lower_file, flag);
 
 	return err;
-}
-
-static struct file *sdcardfs_get_lower_file(struct file *f)
-{
-	return sdcardfs_lower_file(f);
 }
 
 /*
@@ -473,7 +471,6 @@ const struct file_operations sdcardfs_main_fops = {
 	.release	= sdcardfs_file_release,
 	.fsync		= sdcardfs_fsync,
 	.fasync		= sdcardfs_fasync,
-	.get_lower_file = sdcardfs_get_lower_file,
 	.read_iter	= sdcardfs_read_iter,
 	.write_iter	= sdcardfs_write_iter,
 };
@@ -491,6 +488,5 @@ const struct file_operations sdcardfs_dir_fops = {
 	.release	= sdcardfs_file_release,
 	.flush		= sdcardfs_flush,
 	.fsync		= sdcardfs_fsync,
-	.get_lower_file = sdcardfs_get_lower_file,
 	.fasync		= sdcardfs_fasync,
 };

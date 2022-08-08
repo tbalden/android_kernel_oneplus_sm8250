@@ -457,6 +457,8 @@ enum {
 
 #define MBOX_TOUT_MS 100
 
+#define IPA_RULE_CNT_MAX 512
+
 struct ipa3_active_client_htable_entry {
 	struct hlist_node list;
 	char id_string[IPA3_ACTIVE_CLIENTS_LOG_NAME_LEN];
@@ -1032,6 +1034,8 @@ struct ipa3_sys_context {
 	atomic_t xmit_eot_cnt;
 	struct tasklet_struct tasklet;
 	struct work_struct tasklet_work;
+	bool skip_eot;
+	u32 eob_drop_cnt;
 
 	/* ordering is important - mutable fields go above */
 	struct ipa3_ep_context *ep;

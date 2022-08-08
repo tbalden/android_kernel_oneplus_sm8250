@@ -62,6 +62,9 @@ struct wakeup_source {
 	struct timer_list	timer;
 	unsigned long		timer_expires;
 	ktime_t total_time;
+	#ifdef OPLUS_FEATURE_POWERINFO_STANDBY
+	ktime_t total_time_backup;
+	#endif /*OPLUS_FEATURE_POWERINFO_STANDBY*/
 	ktime_t max_time;
 	ktime_t last_time;
 	ktime_t start_prevent_time;
@@ -118,7 +121,6 @@ extern void __pm_relax(struct wakeup_source *ws);
 extern void pm_relax(struct device *dev);
 extern void pm_wakeup_ws_event(struct wakeup_source *ws, unsigned int msec, bool hard);
 extern void pm_wakeup_dev_event(struct device *dev, unsigned int msec, bool hard);
-extern void pm_print_active_wakeup_sources_queue(bool on);
 
 #else /* !CONFIG_PM_SLEEP */
 

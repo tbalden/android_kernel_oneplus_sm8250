@@ -574,6 +574,12 @@ void do_coredump(const siginfo_t *siginfo)
 	cred = prepare_creds();
 	if (!cred)
 		goto fail;
+#ifdef OPLUS_BUG_STABILITY
+	if (strstr(current->group_leader->comm, "rs.media.module")) {
+		printk(KERN_INFO "rs.media.module Aborting core\n");
+		goto fail;
+	}
+#endif
 	/*
 	 * We cannot trust fsuid as being the "true" uid of the process
 	 * nor do we know its entire history. We only know it was tainted
@@ -753,6 +759,14 @@ void do_coredump(const siginfo_t *siginfo)
 	if (displaced)
 		put_files_struct(displaced);
 	if (!dump_interrupted()) {
+		/*
+		 * umh disabled with CONFIG_STATIC_USERMODEHELPER_PATH="" would
+		 * have this set to NULL.
+		 */
+		if (!cprm.file) {
+			pr_info("Core dump to |%s disabled\n", cn.corename);
+			goto close_fail;
+		}
 		file_start_write(cprm.file);
 		core_dumped = binfmt->core_dump(&cprm);
 		file_end_write(cprm.file);

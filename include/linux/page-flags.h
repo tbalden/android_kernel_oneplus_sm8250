@@ -102,9 +102,6 @@ enum pageflags {
 	PG_young,
 	PG_idle,
 #endif
-#ifdef CONFIG_MEMPLUS
-	PG_willneed,
-#endif
 	__NR_PAGEFLAGS,
 
 	/* Filesystems */
@@ -275,7 +272,7 @@ static inline int TestClearPage##uname(struct page *page) { return 0; }
 
 __PAGEFLAG(Locked, locked, PF_NO_TAIL)
 PAGEFLAG(Waiters, waiters, PF_ONLY_HEAD) __CLEARPAGEFLAG(Waiters, waiters, PF_ONLY_HEAD)
-PAGEFLAG(Error, error, PF_NO_COMPOUND) TESTCLEARFLAG(Error, error, PF_NO_COMPOUND)
+PAGEFLAG(Error, error, PF_NO_TAIL) TESTCLEARFLAG(Error, error, PF_NO_TAIL)
 PAGEFLAG(Referenced, referenced, PF_HEAD)
 	TESTCLEARFLAG(Referenced, referenced, PF_HEAD)
 	__SETPAGEFLAG(Referenced, referenced, PF_HEAD)
@@ -327,11 +324,6 @@ PAGEFLAG(Reclaim, reclaim, PF_NO_TAIL)
 PAGEFLAG(Readahead, reclaim, PF_NO_COMPOUND)
 	TESTCLEARFLAG(Readahead, reclaim, PF_NO_COMPOUND)
 
-#ifdef CONFIG_MEMPLUS
-PAGEFLAG(Willneed, willneed, PF_HEAD)
-__CLEARPAGEFLAG(Willneed, willneed, PF_HEAD)
-#endif
-
 #ifdef CONFIG_HIGHMEM
 /*
  * Must use a macro here due to header dependency issues. page_zone() is not
@@ -351,16 +343,8 @@ static __always_inline int PageSwapCache(struct page *page)
 	return PageSwapBacked(page) && test_bit(PG_swapcache, &page->flags);
 
 }
-#include <oneplus/memplus/memplus_helper.h>
-static __always_inline void ClearPageSwapCache(struct page *page)
-{
-	memplus_move_swapcache_to_anon_lru(page);
-}
-
-static __always_inline void SetPageSwapCache(struct page *page)
-{
-	memplus_move_anon_to_swapcache_lru(page);
-}
+SETPAGEFLAG(SwapCache, swapcache, PF_NO_TAIL)
+CLEARPAGEFLAG(SwapCache, swapcache, PF_NO_TAIL)
 #else
 PAGEFLAG_FALSE(SwapCache)
 #endif

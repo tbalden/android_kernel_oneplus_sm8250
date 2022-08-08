@@ -65,7 +65,12 @@ enum MHI_DEBUG_LEVEL msg_lvl = MHI_MSG_LVL_ERROR;
 
 #ifdef CONFIG_MHI_DEBUG
 
-#define MHI_UCI_IPC_LOG_PAGES (25)
+#ifdef OPLUS_BUG_STABILITY
+#define MHI_UCI_IPC_LOG_PAGES (100)
+#else
+#define MHI_UCI_IPC_LOG_PAGES (25) 
+#endif /* OPLUS_BUG_STABILITY */
+
 #define MSG_VERB(fmt, ...) do { \
 		if (msg_lvl <= MHI_MSG_LVL_VERBOSE) \
 			pr_err("[D][%s] " fmt, __func__, ##__VA_ARGS__); \
@@ -537,7 +542,7 @@ static void mhi_uci_remove(struct mhi_device *mhi_dev)
 {
 	struct uci_dev *uci_dev = mhi_device_get_devdata(mhi_dev);
 
-	MSG_ERR("Enter\n");
+	MSG_LOG("Enter\n");
 
 
 	mutex_lock(&mhi_uci_drv.lock);
@@ -632,7 +637,7 @@ static int mhi_uci_probe(struct mhi_device *mhi_dev,
 	mutex_unlock(&mhi_uci_drv.lock);
 	mutex_unlock(&uci_dev->mutex);
 
-	MSG_ERR("channel:%s %s %s successfully probed\n", mhi_dev->chan_name, __func__, node_name);
+	MSG_LOG("channel:%s successfully probed\n", mhi_dev->chan_name);
 
 	return 0;
 };

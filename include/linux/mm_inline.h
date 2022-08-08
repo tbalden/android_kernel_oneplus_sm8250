@@ -77,8 +77,6 @@ static inline enum lru_list page_lru_base_type(struct page *page)
 {
 	if (page_is_file_cache(page))
 		return LRU_INACTIVE_FILE;
-	if (PageSwapCache(page))
-		return MEMPLUS_PAGE_LRU;
 	return LRU_INACTIVE_ANON;
 }
 

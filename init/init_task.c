@@ -42,7 +42,6 @@ static struct signal_struct init_signals = {
 		[PIDTYPE_SID]	= &init_struct_pid,
 	},
 	INIT_PREV_CPUTIME(init_signals)
-	INIT_RECLAIM_STATE
 };
 
 static struct sighand_struct init_sighand = {
@@ -94,6 +93,9 @@ struct task_struct init_task
 #endif
 #ifdef CONFIG_CGROUP_SCHED
 	.sched_task_group = &root_task_group,
+#endif
+#ifdef CONFIG_SCHED_TUNE
+	.stune_idx	= 0,
 #endif
 	.ptraced	= LIST_HEAD_INIT(init_task.ptraced),
 	.ptrace_entry	= LIST_HEAD_INIT(init_task.ptrace_entry),

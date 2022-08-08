@@ -1159,21 +1159,8 @@ static int smb5_parse_dt_misc(struct smb5 *chip, struct device_node *node)
 	chg->pd_not_supported = chg->pd_not_supported ||
 			of_property_read_bool(node, "qcom,usb-pd-disable");
 
-	chg->pd_9vsupported = of_property_read_bool(node, "op,pd-support9v-enable");
-
-	chg->support_hvdcp = of_property_read_bool(node, "op,support-hvdcp");
-
-	rc = of_property_read_u32(node, "op,pdqc-to-5v-vbat-thr",
-				  &chg->qcpd_to_5v_vbat_thr);
-	if (rc < 0)
-		chg->qcpd_to_5v_vbat_thr = 4100;
-
-	rc = of_property_read_u32(node, "op,pdqc-9v-vbat-thr",
-				  &chg->qcpd_9v_vbat_thr);
-	if (rc < 0)
-		chg->qcpd_9v_vbat_thr = 4000;
-
-	chg->lpd_disabled = of_property_read_bool(node, "qcom,lpd-disable");
+	chg->lpd_disabled = chg->lpd_disabled ||
+			of_property_read_bool(node, "qcom,lpd-disable");
 
 	rc = of_property_read_u32(node, "qcom,wd-bark-time-secs",
 					&chip->dt.wd_bark_time);
@@ -2630,11 +2617,9 @@ static enum power_supply_property smb5_batt_props[] = {
 	POWER_SUPPLY_PROP_CHARGE_FULL,
 	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
 	POWER_SUPPLY_PROP_FORCE_RECHARGE,
-//	POWER_SUPPLY_PROP_FCC_STEPPER_ENABLE,
-	POWER_SUPPLY_PROP_OP_DISABLE_CHARGE,
-	POWER_SUPPLY_PROP_TIME_TO_FULL_AVG,
+	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
 	POWER_SUPPLY_PROP_TIME_TO_FULL_NOW,
-	POWER_SUPPLY_PROP_DUMP_REG,
+	POWER_SUPPLY_PROP_FCC_STEPPER_ENABLE,
 };
 
 #define DEBUG_ACCESSORY_TEMP_DECIDEGC	250
@@ -2837,6 +2822,14 @@ static int smb5_batt_get_prop(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_FORCE_RECHARGE:
 		val->intval = 0;
+		break;
+	case POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN:
+		rc = smblib_get_prop_from_bms(chg,
+				POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN, val);
+		break;
+	case POWER_SUPPLY_PROP_TIME_TO_FULL_NOW:
+		rc = smblib_get_prop_from_bms(chg,
+				POWER_SUPPLY_PROP_TIME_TO_FULL_NOW, val);
 		break;
 	case POWER_SUPPLY_PROP_FCC_STEPPER_ENABLE:
 		val->intval = chg->fcc_stepper_enable;
@@ -3267,16 +3260,13 @@ static int smb5_configure_typec(struct smb_charger *chg)
 	}
 
 	/*
-	 * Across reboot, standard typeC cables get detected as legacy cables
-	 * due to VBUS attachment prior to CC attach/dettach. To handle this,
-	 * "early_usb_attach" flag is used, which assumes that across reboot,
-	 * the cable connected can be standard typeC. However, its jurisdiction
-	 * is limited to PD capable designs only. Hence, for non-PD type designs
-	 * reset legacy cable detection by disabling/enabling typeC mode.
+	 * Across reboot, standard typeC cables get detected as legacy
+	 * cables due to VBUS attachment prior to CC attach/detach. Reset
+	 * the legacy detection logic by enabling/disabling the typeC mode.
 	 */
-	if (chg->pd_not_supported && (val & TYPEC_LEGACY_CABLE_STATUS_BIT)) {
+	if (val & TYPEC_LEGACY_CABLE_STATUS_BIT) {
 		pval.intval = POWER_SUPPLY_TYPEC_PR_NONE;
-		smblib_set_prop_typec_power_role(chg, &pval);
+		rc = smblib_set_prop_typec_power_role(chg, &pval);
 		if (rc < 0) {
 			dev_err(chg->dev, "Couldn't disable TYPEC rc=%d\n", rc);
 			return rc;
@@ -3286,7 +3276,7 @@ static int smb5_configure_typec(struct smb_charger *chg)
 		msleep(50);
 
 		pval.intval = POWER_SUPPLY_TYPEC_PR_DUAL;
-		smblib_set_prop_typec_power_role(chg, &pval);
+		rc = smblib_set_prop_typec_power_role(chg, &pval);
 		if (rc < 0) {
 			dev_err(chg->dev, "Couldn't enable TYPEC rc=%d\n", rc);
 			return rc;
@@ -5227,11 +5217,12 @@ static int smb5_init_typec_class(struct smb5 *chip)
 	struct smb_charger *chg = &chip->chg;
 	int rc = 0;
 
+	mutex_init(&chg->typec_lock);
+
 	/* Register typec class for only non-PD TypeC and uUSB designs */
 	if (!chg->pd_not_supported)
 		return rc;
 
-	mutex_init(&chg->typec_lock);
 	chg->typec_caps.type = TYPEC_PORT_DRP;
 	chg->typec_caps.data = TYPEC_PORT_DRD;
 	chg->typec_partner_desc.usb_pd = false;

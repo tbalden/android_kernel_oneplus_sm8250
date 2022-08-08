@@ -30,7 +30,9 @@
 #include <linux/time.h>
 #include <linux/types.h>
 
+#ifdef OPLUS_FEATURE_DUMPDEVICE
 #include <linux/pstore_ram.h>
+#endif /* OPLUS_FEATURE_DUMPDEVICE */
 
 struct module;
 
@@ -279,6 +281,7 @@ pstore_ftrace_write_timestamp(struct pstore_ftrace_record *rec, u64 val)
 }
 #endif
 
+#ifdef OPLUS_FEATURE_DUMPDEVICE
 /*move from ram.c*/
 struct ramoops_context {
 	struct persistent_ram_zone **dprzs;	/* Oops dump zones */
@@ -308,5 +311,6 @@ struct ramoops_context {
 	unsigned int device_info_read_cnt;
 	struct pstore_info pstore;
 };
+#endif
 
 #endif /*_LINUX_PSTORE_H*/

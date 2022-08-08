@@ -27,9 +27,9 @@
 
 #include "drm.h"
 #include "sde_drm.h"
-#if defined(CONFIG_PXLW_IRIS) || defined(PXLW_IRIS5) || defined(CONFIG_PXLW_SOFT_IRIS) || defined(PXLW_SOFT_IRIS_ONLY)
+//#if defined(OPLUS_FEATURE_PXLW_IRIS5)
 #include "msm_drm_iris.h"
-#endif // CONFIG_PXLW_IRIS || PXLW_IRIS5
+//#endif /*OPLUS_FEATURE_PXLW_IRIS5*/
 
 #if defined(__cplusplus)
 extern "C" {

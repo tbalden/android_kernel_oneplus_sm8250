@@ -3,13 +3,18 @@
  * Copyright (c) 2018-2020, The Linux Foundation. All rights reserved.
  */
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
 #include <linux/kernel.h>
 #include <linux/wait.h>
 #include <linux/kthread.h>
 #include <linux/sched.h>
 #include <uapi/linux/sched/types.h>
+#endif
 #include "msm_cvp.h"
 #include "cvp_hfi.h"
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+#include <synx_api.h>
+#endif
 #include "cvp_core_hfi.h"
 #include "cvp_hfi_helper.h"
 
@@ -560,7 +565,9 @@ static void __unmap_buf(struct msm_cvp_inst *inst,
 		if (cbuf->smem.dma_buf == buf->dbuf &&
 			cbuf->buf.size == buf->size &&
 			cbuf->buf.offset == buf->offset) {
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
 			__msm_cvp_cache_operations(cbuf);
+#endif
 			list_del(&cbuf->list);
 			print_internal_buffer(CVP_DBG, "unmap", inst, cbuf);
 			msm_cvp_smem_unmap_dma_buf(inst, &cbuf->smem);
@@ -581,8 +588,9 @@ void msm_cvp_unmap_buf_cpu(struct msm_cvp_inst *inst, u64 ktid)
 		dprintk(CVP_ERR, "%s: invalid params\n", __func__);
 		return;
 	}
-
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
 	ktid &= (FENCE_BIT - 1);
+#endif
 	dprintk(CVP_DBG, "%s: unmap frame %llu\n", __func__, ktid);
 
 	found = false;
@@ -612,7 +620,7 @@ void msm_cvp_unmap_buf_cpu(struct msm_cvp_inst *inst, u64 ktid)
 				__func__, ktid);
 	}
 }
-
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
 static bool cvp_msg_pending(struct cvp_session_queue *sq,
 				struct cvp_session_msg **msg, u64 *ktid)
 {
@@ -693,13 +701,49 @@ exit:
 	return rc;
 }
 
+#else
+static bool _cvp_msg_pending(struct msm_cvp_inst *inst,
+			struct cvp_session_queue *sq,
+			struct cvp_session_msg **msg)
+{
+	struct cvp_session_msg *mptr = NULL;
+	bool result = false;
+
+	spin_lock(&sq->lock);
+	if (sq->state != QUEUE_ACTIVE) {
+		/* The session is being deleted */
+		spin_unlock(&sq->lock);
+		*msg = NULL;
+		return true;
+	}
+	result = list_empty(&sq->msgs);
+	if (!result) {
+		mptr =
+		list_first_entry(&sq->msgs, struct cvp_session_msg, node);
+		list_del_init(&mptr->node);
+		sq->msg_count--;
+	}
+	spin_unlock(&sq->lock);
+	*msg = mptr;
+	return !result;
+}
+#endif
 static int msm_cvp_session_receive_hfi(struct msm_cvp_inst *inst,
 			struct cvp_kmd_hfi_packet *out_pkt)
 {
 	unsigned long wait_time;
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+	struct cvp_session_msg *msg = NULL;
+#endif
 	struct cvp_session_queue *sq;
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+	struct cvp_kmd_session_control *sc;
+#endif
 	struct msm_cvp_inst *s;
 	int rc = 0;
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+	u32 version;
+#endif
 
 	if (!inst) {
 		dprintk(CVP_ERR, "%s invalid session\n", __func__);
@@ -711,11 +755,58 @@ static int msm_cvp_session_receive_hfi(struct msm_cvp_inst *inst,
 		return -ECONNRESET;
 
 	s->cur_cmd_type = CVP_KMD_RECEIVE_MSG_PKT;
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+	sq = &inst->session_queue;
+	sc = (struct cvp_kmd_session_control *)out_pkt;
+#endif
 	wait_time = msecs_to_jiffies(CVP_MAX_WAIT_TIME);
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+	if (wait_event_timeout(sq->wq,
+		_cvp_msg_pending(inst, sq, &msg), wait_time) == 0) {
+		dprintk(CVP_WARN, "session queue wait timeout\n");
+		rc = -ETIMEDOUT;
+		goto exit;
+	}
+
+	version = (get_hfi_version() & HFI_VERSION_MINOR_MASK)
+				>> HFI_VERSION_MINOR_SHIFT;
+
+	if (msg == NULL) {
+		dprintk(CVP_WARN,
+			"%s: session deleted, queue state %d, msg cnt %d\n",
+			__func__, inst->session_queue.state,
+			inst->session_queue.msg_count);
+
+		if (inst->state >= MSM_CVP_CLOSE_DONE ||
+				sq->state != QUEUE_ACTIVE) {
+			rc = -ECONNRESET;
+			goto exit;
+		}
+
+		msm_cvp_comm_kill_session(inst);
+	} else {
+		if (version >= 1) {
+			u64 ktid;
+			u32 kdata1, kdata2;
+
+			kdata1 = msg->pkt.client_data.kdata1;
+			kdata2 = msg->pkt.client_data.kdata2;
+			ktid = ((u64)kdata2 << 32) | kdata1;
+			msm_cvp_unmap_buf_cpu(inst, ktid);
+		}
+
+		memcpy(out_pkt, &msg->pkt,
+			sizeof(struct cvp_hfi_msg_session_hdr));
+		kmem_cache_free(cvp_driver->msg_cache, msg);
+	}
+
+exit:
+#else 
 	sq = &inst->session_queue;
 
 	rc = cvp_wait_process_message(inst, sq, NULL, wait_time, out_pkt);
 
+#endif
 	s->cur_cmd_type = 0;
 	cvp_put_inst(inst);
 	return rc;
@@ -791,8 +882,13 @@ static int msm_cvp_map_buf(struct msm_cvp_inst *inst,
 
 		cmd_hdr = (struct cvp_hfi_cmd_session_hdr *)in_pkt;
 		ktid = atomic64_inc_return(&inst->core->kernel_trans_id);
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
 		ktid &= (FENCE_BIT - 1);
 		cmd_hdr->client_data.kdata = ktid;
+#else
+		cmd_hdr->client_data.kdata1 = (u32)ktid;
+		cmd_hdr->client_data.kdata2 = (u32)(ktid >> 32);
+#endif
 
 		frame = kmem_cache_zalloc(cvp_driver->frame_cache, GFP_KERNEL);
 		if (!frame)
@@ -939,9 +1035,7 @@ static int msm_cvp_session_process_hfi(
 		dprintk(CVP_ERR, "%s incorrect packet %d, %x\n", __func__,
 				in_pkt->pkt_data[0],
 				in_pkt->pkt_data[1]);
-		offset = in_offset;
-		buf_num = in_buf_num;
-		signal = HAL_NO_RESP;
+		goto exit;
 	} else {
 		offset = cvp_hfi_defs[pkt_idx].buf_offset;
 		buf_num = cvp_hfi_defs[pkt_idx].buf_num;
@@ -1009,6 +1103,7 @@ exit:
 	return rc;
 }
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
 static bool cvp_fence_wait(struct cvp_fence_queue *q,
 			struct msm_cvp_fence_thread_data **fence,
 			enum queue_state *state)
@@ -1038,7 +1133,7 @@ static bool cvp_fence_wait(struct cvp_fence_queue *q,
 
 	return true;
 }
-
+#endif
 #define CVP_FENCE_RUN	0x100
 static int msm_cvp_thread_fence_run(void *data)
 {
@@ -1050,26 +1145,39 @@ static int msm_cvp_thread_fence_run(void *data)
 	struct cvp_kmd_hfi_fence_packet *in_fence_pkt;
 	struct cvp_kmd_hfi_packet *in_pkt;
 	struct msm_cvp_inst *inst;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
 	struct sched_param param = {.sched_priority = 64 };
+#endif
 	int *fence;
 	int ica_enabled = 0;
 	int pkt_idx;
 	int synx_state = SYNX_STATE_SIGNALED_SUCCESS;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
 	u64 ktid;
 	struct cvp_hfi_cmd_session_hdr *cmd_hdr;
 
 	sched_setscheduler(current, SCHED_FIFO, &param);
+#endif
 
 	if (!data) {
 		dprintk(CVP_ERR, "%s Wrong input data %pK\n", __func__, data);
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
 		return -EINVAL;
+#else
+		do_exit(-EINVAL);
+#endif
 	}
 
 	fence_thread_data = data;
 	inst = fence_thread_data->inst;
 	if (!inst) {
 		dprintk(CVP_ERR, "%s Wrong inst %pK\n", __func__, inst);
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
 		return -EINVAL;
+#else
+		rc = -EINVAL;
+		return rc;
+#endif
 	}
 	inst->cur_cmd_type = CVP_FENCE_RUN;
 	in_fence_pkt = (struct cvp_kmd_hfi_fence_packet *)
@@ -1087,8 +1195,10 @@ static int msm_cvp_thread_fence_run(void *data)
 
 	fence = (int *)(in_fence_pkt->fence_data);
 	hdev = inst->core->device;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
 	cmd_hdr = (struct cvp_hfi_cmd_session_hdr *)in_pkt;
 	ktid = cmd_hdr->client_data.kdata;
+#endif
 
 	//wait on synx before signaling HFI
 	switch (cvp_hfi_defs[pkt_idx].type) {
@@ -1130,6 +1240,9 @@ static int msm_cvp_thread_fence_run(void *data)
 		}
 
 		if (synx_state != SYNX_STATE_SIGNALED_ERROR) {
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+			mutex_lock(&inst->fence_lock);
+#endif
 			rc = call_hfi_op(hdev, session_send,
 					(void *)inst->session, in_pkt);
 			if (rc) {
@@ -1139,16 +1252,23 @@ static int msm_cvp_thread_fence_run(void *data)
 					in_pkt->pkt_data[1]);
 				synx_state = SYNX_STATE_SIGNALED_ERROR;
 			}
-
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
 			rc = cvp_wait_process_message(inst,
 					&inst->session_queue_fence,
 					&ktid, timeout_ms, NULL);
+#else
+			rc = wait_for_sess_signal_receipt_fence(inst,
+					HAL_SESSION_DME_FRAME_CMD_DONE);
+#endif
 			if (rc) {
 				dprintk(CVP_ERR,
 				"%s: wait for signal failed, rc %d\n",
 				__func__, rc);
 				synx_state = SYNX_STATE_SIGNALED_ERROR;
 			}
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+			mutex_unlock(&inst->fence_lock);
+#endif
 		}
 
 		if (ica_enabled) {
@@ -1193,6 +1313,84 @@ static int msm_cvp_thread_fence_run(void *data)
 		}
 		break;
 	}
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+	case HFI_CMD_SESSION_CVP_ICA_FRAME:
+	{
+		for (i = 0; i < cvp_hfi_defs[pkt_idx].buf_num-1; i++) {
+			if (fence[(i<<1)]) {
+				rc = synx_import(fence[(i<<1)],
+					fence[((i<<1)+1)], &synx_obj);
+				if (rc) {
+					dprintk(CVP_ERR,
+						"%s: synx_import failed\n",
+						__func__);
+					goto exit;
+				}
+				rc = synx_wait(synx_obj, timeout_ms);
+				if (rc) {
+					dprintk(CVP_ERR,
+						"%s: synx_wait failed\n",
+						__func__);
+					goto exit;
+				}
+				rc = synx_release(synx_obj);
+				if (rc) {
+					dprintk(CVP_ERR,
+						"%s: synx_release failed\n",
+						__func__);
+					goto exit;
+				}
+				if (i == 0) {
+					/*
+					 * Increase loop count to skip fence
+					 * waiting on output corrected image.
+					 */
+					i = i+1;
+				}
+			}
+		}
+
+		mutex_lock(&inst->fence_lock);
+		rc = call_hfi_op(hdev, session_send,
+				(void *)inst->session, in_pkt);
+		if (rc) {
+			dprintk(CVP_ERR,
+				"%s: Failed in call_hfi_op %d, %x\n",
+				__func__, in_pkt->pkt_data[0],
+				in_pkt->pkt_data[1]);
+			synx_state = SYNX_STATE_SIGNALED_ERROR;
+		}
+
+		if (synx_state != SYNX_STATE_SIGNALED_ERROR) {
+			rc = wait_for_sess_signal_receipt_fence(inst,
+					HAL_SESSION_ICA_FRAME_CMD_DONE);
+			if (rc) {
+				dprintk(CVP_ERR,
+				"%s: wait for signal failed, rc %d\n",
+				__func__, rc);
+				synx_state = SYNX_STATE_SIGNALED_ERROR;
+			}
+		}
+		mutex_unlock(&inst->fence_lock);
+
+		rc = synx_import(fence[2], fence[3], &synx_obj);
+		if (rc) {
+			dprintk(CVP_ERR, "%s: synx_import failed\n", __func__);
+			goto exit;
+		}
+		rc = synx_signal(synx_obj, synx_state);
+		if (rc) {
+			dprintk(CVP_ERR, "%s: synx_signal failed\n", __func__);
+			goto exit;
+		}
+		rc = synx_release(synx_obj);
+		if (rc) {
+			dprintk(CVP_ERR, "%s: synx_release failed\n", __func__);
+			goto exit;
+		}
+		break;
+	}
+#endif
 	case HFI_CMD_SESSION_CVP_FD_FRAME:
 	{
 		int in_fence_num = fence[0];
@@ -1226,6 +1424,9 @@ static int msm_cvp_thread_fence_run(void *data)
 			}
 		}
 
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+		mutex_lock(&inst->fence_lock);
+#endif
 		rc = call_hfi_op(hdev, session_send,
 				(void *)inst->session, in_pkt);
 		if (rc) {
@@ -1236,6 +1437,7 @@ static int msm_cvp_thread_fence_run(void *data)
 			synx_state = SYNX_STATE_SIGNALED_ERROR;
 		}
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
 		rc = cvp_wait_process_message(inst, &inst->session_queue_fence,
 						&ktid, timeout_ms, NULL);
 		if (rc) {
@@ -1244,6 +1446,19 @@ static int msm_cvp_thread_fence_run(void *data)
 			__func__, rc);
 			synx_state = SYNX_STATE_SIGNALED_ERROR;
 		}
+#else
+		if (synx_state != SYNX_STATE_SIGNALED_ERROR) {
+			rc = wait_for_sess_signal_receipt_fence(inst,
+					HAL_SESSION_FD_FRAME_CMD_DONE);
+			if (rc) {
+				dprintk(CVP_ERR,
+				"%s: wait for signal failed, rc %d\n",
+				__func__, rc);
+				synx_state = SYNX_STATE_SIGNALED_ERROR;
+			}
+		}
+		mutex_unlock(&inst->fence_lock);
+#endif
 
 		for (i = start_out; i <  start_out + out_fence_num; i++) {
 			if (fence[(i<<1)]) {
@@ -1284,9 +1499,15 @@ static int msm_cvp_thread_fence_run(void *data)
 exit:
 	kmem_cache_free(cvp_driver->fence_data_cache, fence_thread_data);
 	inst->cur_cmd_type = 0;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
 	return rc;
+#else
+	cvp_put_inst(inst);
+	do_exit(rc);
+#endif
 }
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
 static int cvp_fence_thread(void *data)
 {
 	int rc = 0;
@@ -1327,19 +1548,35 @@ exit:
 	cvp_put_inst(inst);
 	do_exit(rc);
 }
+#endif
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
 static int msm_cvp_session_process_hfi_fence(struct msm_cvp_inst *inst,
 					struct cvp_kmd_arg *arg)
+#else
+static int msm_cvp_session_process_hfi_fence(
+	struct msm_cvp_inst *inst,
+	struct cvp_kmd_arg *arg)
+#endif
 {
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+	static int thread_num;
+	struct task_struct *thread;
+#endif
 	int rc = 0;
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+	char thread_fence_name[32];
+#endif
 	int pkt_idx;
 	struct cvp_kmd_hfi_packet *in_pkt;
 	unsigned int signal, offset, buf_num, in_offset, in_buf_num;
 	struct msm_cvp_inst *s;
 	unsigned int max_buf_num;
 	struct msm_cvp_fence_thread_data *fence_thread_data;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
 	struct cvp_fence_queue *q;
 	struct cvp_hfi_cmd_session_hdr *cmd_hdr;
+#endif
 
 	dprintk(CVP_DBG, "%s: Enter inst = %#x", __func__, inst);
 
@@ -1397,7 +1634,7 @@ static int msm_cvp_session_process_hfi_fence(struct msm_cvp_inst *inst,
 	rc = msm_cvp_map_buf(inst, in_pkt, offset, buf_num);
 	if (rc)
 		goto free_and_exit;
-
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
 	cmd_hdr = (struct cvp_hfi_cmd_session_hdr *)in_pkt;
 	cmd_hdr->client_data.kdata |= FENCE_BIT;
 	fence_thread_data->inst = inst;
@@ -1414,6 +1651,19 @@ static int msm_cvp_session_process_hfi_fence(struct msm_cvp_inst *inst,
 	wake_up(&inst->fence_cmd_queue.wq);
 
 	goto exit;
+#else
+	snprintf(thread_fence_name, sizeof(thread_fence_name),
+				"thread_fence_%d", thread_num);
+	thread = kthread_run(msm_cvp_thread_fence_run,
+			fence_thread_data, thread_fence_name);
+	if (!thread) {
+		dprintk(CVP_ERR, "%s fail to create kthread\n", __func__);
+		rc = -ECHILD;
+		goto free_and_exit;
+	}
+
+	return 0;
+#endif
 
 free_and_exit:
 	kmem_cache_free(cvp_driver->fence_data_cache, fence_thread_data);
@@ -1422,6 +1672,39 @@ exit:
 	cvp_put_inst(s);
 	return rc;
 }
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+static int msm_cvp_session_cvp_dfs_frame_response(
+	struct msm_cvp_inst *inst,
+	struct cvp_kmd_hfi_packet *dfs_frame)
+{
+	dprintk(CVP_ERR, "Deprecated system call: DFS_CMD_RESPONSE\n");
+		return -EINVAL;
+}
+
+static int msm_cvp_session_cvp_dme_frame_response(
+	struct msm_cvp_inst *inst,
+	struct cvp_kmd_hfi_packet *dme_frame)
+{
+	dprintk(CVP_ERR, "Deprecated system call: DME_CMD_RESPONSE\n");
+		return -EINVAL;
+}
+
+static int msm_cvp_session_cvp_persist_response(
+	struct msm_cvp_inst *inst,
+	struct cvp_kmd_hfi_packet *pbuf_cmd)
+{
+	dprintk(CVP_ERR, "Deprecated system call: PERSIST_CMD_RESPONSE\n");
+		return -EINVAL;
+}
+
+static int msm_cvp_send_cmd(struct msm_cvp_inst *inst,
+		struct cvp_kmd_send_cmd *send_cmd)
+{
+	dprintk(CVP_ERR, "Deprecated system call: cvp_send_cmd\n");
+
+	return 0;
+}
+#endif
 
 static inline int div_by_1dot5(unsigned int a)
 {
@@ -1772,8 +2055,8 @@ static int msm_cvp_request_power(struct msm_cvp_inst *inst,
 }
 
 static int msm_cvp_update_power(struct msm_cvp_inst *inst)
-{
-	int rc = 0;
+
+{	int rc = 0;
 	struct msm_cvp_core *core;
 	struct msm_cvp_inst *s;
 
@@ -1848,8 +2131,9 @@ static int msm_cvp_unregister_buffer(struct msm_cvp_inst *inst,
 		return -EINVAL;
 	}
 
-	if (!buf->index)
+	if (!buf->index) {
 		return 0;
+	}
 
 	s = cvp_get_inst_validate(inst->core, inst);
 	if (!s)
@@ -1912,6 +2196,7 @@ static int session_state_check_init(struct msm_cvp_inst *inst)
 	return msm_cvp_session_create(inst);
 }
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
 static int cvp_fence_thread_start(struct msm_cvp_inst *inst)
 {
 	u32 tnum = 0;
@@ -1984,6 +2269,7 @@ static int cvp_fence_thread_stop(struct msm_cvp_inst *inst)
 
 	return 0;
 }
+#endif
 
 static int msm_cvp_session_start(struct msm_cvp_inst *inst,
 		struct cvp_kmd_arg *arg)
@@ -2000,10 +2286,14 @@ static int msm_cvp_session_start(struct msm_cvp_inst *inst,
 	}
 	sq->state = QUEUE_ACTIVE;
 	spin_unlock(&sq->lock);
-
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
 	return cvp_fence_thread_start(inst);
+#else
+	return 0;
+#endif
 }
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
 int msm_cvp_session_queue_stop(struct msm_cvp_inst *inst)
 {
 	struct cvp_session_queue *sq;
@@ -2026,6 +2316,7 @@ int msm_cvp_session_queue_stop(struct msm_cvp_inst *inst)
 
 	return cvp_fence_thread_stop(inst);
 }
+#endif
 
 static int msm_cvp_session_stop(struct msm_cvp_inst *inst,
 		struct cvp_kmd_arg *arg)
@@ -2048,8 +2339,11 @@ static int msm_cvp_session_stop(struct msm_cvp_inst *inst,
 	spin_unlock(&sq->lock);
 
 	wake_up_all(&inst->session_queue.wq);
-
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
 	return cvp_fence_thread_stop(inst);
+#else
+	return 0;
+#endif
 }
 
 static int msm_cvp_session_ctrl(struct msm_cvp_inst *inst,
@@ -2272,6 +2566,16 @@ int msm_cvp_handle_syscall(struct msm_cvp_inst *inst, struct cvp_kmd_arg *arg)
 		rc = msm_cvp_unregister_buffer(inst, buf);
 		break;
 	}
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+	case CVP_KMD_HFI_SEND_CMD:
+	{
+		struct cvp_kmd_send_cmd *send_cmd =
+			(struct cvp_kmd_send_cmd *)&arg->data.send_cmd;
+
+		rc = msm_cvp_send_cmd(inst, send_cmd);
+		break;
+	}
+#endif
 	case CVP_KMD_RECEIVE_MSG_PKT:
 	{
 		struct cvp_kmd_hfi_packet *out_pkt =
@@ -2280,6 +2584,14 @@ int msm_cvp_handle_syscall(struct msm_cvp_inst *inst, struct cvp_kmd_arg *arg)
 		break;
 	}
 	case CVP_KMD_SEND_CMD_PKT:
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+	case CVP_KMD_HFI_DFS_CONFIG_CMD:
+	case CVP_KMD_HFI_DFS_FRAME_CMD:
+	case CVP_KMD_HFI_DME_CONFIG_CMD:
+	case CVP_KMD_HFI_DME_FRAME_CMD:
+	case CVP_KMD_HFI_FD_FRAME_CMD:
+	case CVP_KMD_HFI_PERSIST_CMD:
+#endif
 	{
 		struct cvp_kmd_hfi_packet *in_pkt =
 			(struct cvp_kmd_hfi_packet *)&arg->data.hfi_pkt;
@@ -2288,6 +2600,33 @@ int msm_cvp_handle_syscall(struct msm_cvp_inst *inst, struct cvp_kmd_arg *arg)
 				arg->buf_offset, arg->buf_num);
 		break;
 	}
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+	case CVP_KMD_HFI_DFS_FRAME_CMD_RESPONSE:
+	{
+		struct cvp_kmd_hfi_packet *dfs_frame =
+			(struct cvp_kmd_hfi_packet *)&arg->data.hfi_pkt;
+
+		rc = msm_cvp_session_cvp_dfs_frame_response(inst, dfs_frame);
+		break;
+	}
+	case CVP_KMD_HFI_DME_FRAME_CMD_RESPONSE:
+	{
+		struct cvp_kmd_hfi_packet *dme_frame =
+			(struct cvp_kmd_hfi_packet *)&arg->data.hfi_pkt;
+
+		rc = msm_cvp_session_cvp_dme_frame_response(inst, dme_frame);
+		break;
+	}
+	case CVP_KMD_HFI_PERSIST_CMD_RESPONSE:
+	{
+		struct cvp_kmd_hfi_packet *pbuf_cmd =
+			(struct cvp_kmd_hfi_packet *)&arg->data.hfi_pkt;
+
+		rc = msm_cvp_session_cvp_persist_response(inst, pbuf_cmd);
+		break;
+	}
+	case CVP_KMD_HFI_DME_FRAME_FENCE_CMD:
+#endif
 	case CVP_KMD_SEND_FENCE_CMD_PKT:
 	{
 		rc = msm_cvp_session_process_hfi_fence(inst, arg);
@@ -2420,7 +2759,9 @@ int msm_cvp_session_init(struct msm_cvp_inst *inst)
 	inst->prop.priority = 0;
 	inst->prop.is_secure = 0;
 	inst->prop.dsp_mask = 0;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
 	inst->prop.fthread_nr = 2;
+#endif
 
 	return rc;
 }

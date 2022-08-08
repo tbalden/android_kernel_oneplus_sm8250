@@ -246,7 +246,81 @@ static const struct vadc_map_pt adcmap_batt_therm_100k_6125[] = {
  * Voltage to temperature table for 30k pull up for bat_therm with
  * Alium.
  */
-static const struct vadc_map_pt adcmap_batt_therm_30k[] = {
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	static const struct vadc_map_pt adcmap_batt_therm_30k[] = {
+	{	1623	,	-400	},
+	{	1600	,	-380	},
+	{	1575	,	-360	},
+	{	1548	,	-340	},
+	{	1520	,	-320	},
+	{	1491	,	-300	},
+	{	1460	,	-280	},
+	{	1429	,	-260	},
+	{	1396	,	-240	},
+	{	1363	,	-220	},
+	{	1328	,	-200	},
+	{	1293	,	-180	},
+	{	1258	,	-160	},
+	{	1222	,	-140	},
+	{	1186	,	-120	},
+	{	1150	,	-100	},
+	{	1114	,	-80 },
+	{	1078	,	-60 },
+	{	1042	,	-40 },
+	{	1008	,	-20 },
+	{	973 	,	0	},
+	{	940 	,	20	},
+	{	907 	,	40	},
+	{	875 	,	60	},
+	{	845 	,	80	},
+	{	815 	,	100 },
+	{	786 	,	120 },
+	{	759 	,	140 },
+	{	732 	,	160 },
+	{	707 	,	180 },
+	{	683 	,	200 },
+	{	660 	,	220 },
+	{	638 	,	240 },
+	{	618 	,	260 },
+	{	598 	,	280 },
+	{	579 	,	300 },
+	{	562 	,	320 },
+	{	545 	,	340 },
+	{	529 	,	360 },
+	{	514 	,	380 },
+	{	501 	,	400 },
+	{	487 	,	420 },
+	{	475 	,	440 },
+	{	463 	,	460 },
+	{	452 	,	480 },
+	{	442 	,	500 },
+	{	433 	,	520 },
+	{	423 	,	540 },
+	{	415 	,	560 },
+	{	407 	,	580 },
+	{	399 	,	600 },
+	{	392 	,	620 },
+	{	386 	,	640 },
+	{	379 	,	660 },
+	{	374 	,	680 },
+	{	368 	,	700 },
+	{	363 	,	720 },
+	{	358 	,	740 },
+	{	353 	,	760 },
+	{	349 	,	780 },
+	{	345 	,	800 },
+	{	341 	,	820 },
+	{	338 	,	840 },
+	{	334 	,	860 },
+	{	331 	,	880 },
+	{	328 	,	900 },
+	{	325 	,	920 },
+	{	323 	,	940 },
+	{	320 	,	960 },
+	{	318 	,	980 },
+	};
+#else
+	static const struct vadc_map_pt adcmap_batt_therm_30k[] = {
 	{1864,	-400},
 	{1863,	-380},
 	{1861,	-360},
@@ -317,7 +391,9 @@ static const struct vadc_map_pt adcmap_batt_therm_30k[] = {
 	{349,	940},
 	{332,	960},
 	{315,	980}
-};
+	};
+#endif
+
 
 /*
  * Voltage to temperature table for 30k pull up for bat_therm with
@@ -1208,6 +1284,35 @@ static int qcom_vadc_scale_hw_smb1398_temp(
 	return 0;
 }
 
+static int qcom_vadc_scale_hw_pm2250_s3_die_temp(
+				const struct vadc_prescale_ratio *prescale,
+				const struct adc_data *data,
+				u16 adc_code, int *result_mdec)
+{
+	s64 voltage = 0, adc_vdd_ref_mv = 1875;
+
+	if (adc_code > VADC5_MAX_CODE)
+		adc_code = 0;
+
+	/* (ADC code * vref_vadc (1.875V)) / full_scale_code */
+	voltage = (s64) adc_code * adc_vdd_ref_mv * 1000;
+	voltage = div64_s64(voltage, data->full_scale_code_volt);
+	if (voltage > 0) {
+		voltage *= prescale->den;
+		voltage = div64_s64(voltage, prescale->num);
+	} else {
+		voltage = 0;
+	}
+
+	voltage = PMIC5_PM2250_S3_DIE_TEMP_CONSTANT - voltage;
+	voltage *= 100000;
+	voltage = div64_s64(voltage, PMIC5_PM2250_S3_DIE_TEMP_SCALE_FACTOR);
+
+	*result_mdec = voltage;
+
+	return 0;
+}
+
 static int qcom_vadc_scale_hw_chg5_temp(
 				const struct vadc_prescale_ratio *prescale,
 				const struct adc_data *data,
@@ -1328,6 +1433,9 @@ int qcom_vadc_hw_scale(enum vadc_scale_fn_type scaletype,
 						adc_code, result);
 	case SCALE_HW_CALIB_PM5_SMB1398_TEMP:
 		return qcom_vadc_scale_hw_smb1398_temp(prescale, data,
+						adc_code, result);
+	case SCALE_HW_CALIB_PM2250_S3_DIE_TEMP:
+		return qcom_vadc_scale_hw_pm2250_s3_die_temp(prescale, data,
 						adc_code, result);
 	case SCALE_HW_CALIB_THERM_100K_PU_PM7:
 		return qcom_vadc7_scale_hw_calib_therm(prescale, data,

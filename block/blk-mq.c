@@ -505,8 +505,11 @@ void blk_mq_free_request(struct request *rq)
 
 	if (unlikely(laptop_mode && !blk_rq_is_passthrough(rq)))
 		laptop_io_completion(q->backing_dev_info);
-
+#if defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_OPLUS_FEATURE_UXIO_FIRST)
+	rq_qos_done(q, rq,(bool)((rq->cmd_flags & REQ_FG)||(rq->cmd_flags & REQ_UX)));
+#else
 	rq_qos_done(q, rq);
+#endif
 
 	if (blk_rq_rl(rq))
 		blk_put_rl(blk_rq_rl(rq));
@@ -529,7 +532,11 @@ inline void __blk_mq_end_request(struct request *rq, blk_status_t error)
 	blk_account_io_done(rq, now);
 
 	if (rq->end_io) {
+#if defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_OPLUS_FEATURE_UXIO_FIRST)
+		rq_qos_done(rq->q, rq,(bool)((rq->cmd_flags & REQ_FG)||(rq->cmd_flags & REQ_UX)));
+#else
 		rq_qos_done(rq->q, rq);
+#endif
 		rq->end_io(rq, error);
 	} else {
 		if (unlikely(blk_bidi_rq(rq)))
@@ -1220,6 +1227,15 @@ bool blk_mq_dispatch_rq_list(struct request_queue *q, struct list_head *list,
 		spin_lock(&hctx->lock);
 		list_splice_init(list, &hctx->dispatch);
 		spin_unlock(&hctx->lock);
+
+		/*
+		 * Order adding requests to hctx->dispatch and checking
+		 * SCHED_RESTART flag. The pair of this smp_mb() is the one
+		 * in blk_mq_sched_restart(). Avoid restart code path to
+		 * miss the new added requests to hctx->dispatch, meantime
+		 * SCHED_RESTART is observed here.
+		 */
+		smp_mb();
 
 		/*
 		 * If SCHED_RESTART was set by the caller of this function and

@@ -95,12 +95,6 @@
 #include <linux/thread_info.h>
 #include <linux/cpufreq_times.h>
 #include <linux/scs.h>
-#ifdef CONFIG_HOUSTON
-#include <oneplus/houston/houston_helper.h>
-#endif
-#ifdef CONFIG_CONTROL_CENTER
-#include <oneplus/control_center/control_center_helper.h>
-#endif
 
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
@@ -113,6 +107,17 @@
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/task.h>
+#ifdef OPLUS_FEATURE_SCHED_ASSIST
+#include <linux/sched_assist/sched_assist_fork.h>
+#endif /* OPLUS_FEATURE_SCHED_ASSIST */
+#ifdef OPLUS_FEATURE_HEALTHINFO
+#ifdef CONFIG_OPLUS_JANK_INFO
+#include <linux/healthinfo/jank_monitor.h>
+#endif
+#endif /* OPLUS_FEATURE_HEALTHINFO */
+#ifdef CONFIG_OPLUS_FEATURE_IM
+#include <linux/im/im.h>
+#endif
 
 /*
  * Minimum number of threads to boot the kernel
@@ -124,6 +129,10 @@
  */
 #define MAX_THREADS FUTEX_TID_MASK
 
+#if defined(OPLUS_FEATURE_MEMLEAK_DETECT) && defined(CONFIG_ION) && defined(CONFIG_DUMP_TASKS_MEM)
+/* update user tasklist */
+extern void update_user_tasklist(struct task_struct *tsk);
+#endif
 /*
  * Protected counters by write_lock_irq(&tasklist_lock)
  */
@@ -143,10 +152,6 @@ int lockdep_tasklist_lock_is_held(void)
 }
 EXPORT_SYMBOL_GPL(lockdep_tasklist_lock_is_held);
 #endif /* #ifdef CONFIG_PROVE_RCU */
-
-#ifdef CONFIG_ONEPLUS_TASKLOAD_INFO
-struct sample_window_t sample_window;
-#endif
 
 int nr_processes(void)
 {
@@ -178,6 +183,10 @@ static inline void free_task_struct(struct task_struct *tsk)
 #endif
 
 #ifndef CONFIG_ARCH_THREAD_STACK_ALLOCATOR
+
+#ifdef CONFIG_OPLUS_FEATURE_UID_PERF
+extern void uid_perf_work_add(struct task_struct *task, bool force);
+#endif
 
 /*
  * Allocate pages if THREAD_SIZE is >= PAGE_SIZE, otherwise use a
@@ -581,6 +590,7 @@ static __latent_entropy int dup_mmap(struct mm_struct *mm,
 		if (retval)
 			goto out;
 	}
+
 	/* a new mm has just been created */
 	retval = arch_dup_mmap(oldmm, mm);
 out:
@@ -917,27 +927,6 @@ static struct task_struct *dup_task_struct(struct task_struct *orig, int node)
 	tsk->splice_pipe = NULL;
 	tsk->task_frag.page = NULL;
 	tsk->wake_q.next = NULL;
-#ifdef CONFIG_CONTROL_CENTER
-	tsk->nice_effect_ts = 0;
-	tsk->cached_prio = tsk->static_prio;
-#endif
-/* 2020-05-19 add for uxrealm*/
-#ifdef CONFIG_OPCHAIN
-	tsk->utask_tag = 0;
-	tsk->utask_tag_base = 0;
-	tsk->etask_claim = 0;
-	tsk->claim_cpu = -1;
-	tsk->utask_slave = 0;
-#endif
-
-#ifdef CONFIG_UXCHAIN
-	tsk->static_ux = 0;
-	tsk->dynamic_ux = 0;
-	tsk->ux_depth = 0;
-	tsk->oncpu_time = 0;
-	tsk->prio_saved = 0;
-	tsk->saved_flag = 0;
-#endif
 
 	account_kernel_stack(tsk, 1);
 
@@ -956,9 +945,11 @@ static struct task_struct *dup_task_struct(struct task_struct *orig, int node)
 	tsk->active_memcg = NULL;
 #endif
 
-#ifdef CONFIG_TPD
+#ifdef CONFIG_OPLUS_FEATURE_TPD
 	tsk->tpd = 0;
 	tsk->dtpd = 0;
+	tsk->dtpdg = -1;
+	tsk->tpd_st = 0; /* for system thread affinity */
 #endif
 	return tsk;
 
@@ -1022,8 +1013,11 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 	mm->mmap = NULL;
 	mm->mm_rb = RB_ROOT;
 	mm->vmacache_seqnum = 0;
+#if defined(OPLUS_FEATURE_VIRTUAL_RESERVE_MEMORY) && defined(CONFIG_VIRTUAL_RESERVE_MEMORY)
 	mm->va_feature = 0;
+	mm->va_feature_rnd = 0;
 	mm->zygoteheap_in_MB = 0;
+#endif
 #ifdef CONFIG_SPECULATIVE_PAGE_FAULT
 	rwlock_init(&mm->mm_rb_lock);
 #endif
@@ -1277,7 +1271,9 @@ static int wait_for_vfork_done(struct task_struct *child,
 	int killed;
 
 	freezer_do_not_count();
+	cgroup_enter_frozen();
 	killed = wait_for_completion_killable(vfork);
+	cgroup_leave_frozen(false);
 	freezer_count();
 
 	if (killed) {
@@ -1613,10 +1609,6 @@ static int copy_signal(unsigned long clone_flags, struct task_struct *tsk)
 	sig->oom_score_adj = current->signal->oom_score_adj;
 	sig->oom_score_adj_min = current->signal->oom_score_adj_min;
 
-	/* CONFIG_MEMPLUS add start by bin.zhong@ASTI */
-	memplus_init_task_reclaim_stat(sig);
-	/* add end */
-
 	mutex_init(&sig->cred_guard_mutex);
 
 	return 0;
@@ -1815,6 +1807,25 @@ static int pidfd_create(struct pid *pid)
 	return fd;
 }
 
+static void copy_oom_score_adj(u64 clone_flags, struct task_struct *tsk)
+{
+	/* Skip if kernel thread */
+	if (!tsk->mm)
+		return;
+
+	/* Skip if spawning a thread or using vfork */
+	if ((clone_flags & (CLONE_VM | CLONE_THREAD | CLONE_VFORK)) != CLONE_VM)
+		return;
+
+	/* We need to synchronize with __set_oom_adj */
+	mutex_lock(&oom_adj_mutex);
+	set_bit(MMF_MULTIPROCESS, &tsk->mm->flags);
+	/* Update the values in case they were changed after copy_signal */
+	tsk->signal->oom_score_adj = current->signal->oom_score_adj;
+	tsk->signal->oom_score_adj_min = current->signal->oom_score_adj_min;
+	mutex_unlock(&oom_adj_mutex);
+}
+
 /*
  * This creates a new process as a copy of the old one,
  * but does not actually start it yet.
@@ -2010,11 +2021,6 @@ static __latent_entropy struct task_struct *copy_process(
 #endif
 
 	task_io_accounting_init(&p->ioac);
-
-#ifdef CONFIG_ONEPLUS_TASKLOAD_INFO
-	task_tli_init(p);
-#endif
-
 	acct_clear_integrals(p);
 
 	posix_cpu_timers_init(p);
@@ -2067,11 +2073,16 @@ static __latent_entropy struct task_struct *copy_process(
 	p->sequential_io	= 0;
 	p->sequential_io_avg	= 0;
 #endif
-#ifdef CONFIG_ONEPLUS_HEALTHINFO
-	p->stuck_trace = 0;
-	memset(&p->oneplus_stuck_info, 0, sizeof(struct oneplus_uifirst_monitor_info));
-#endif /*CONFIG_ONEPLUS_HEALTHINFO*/
-	p->fpack = NULL;
+
+#ifdef OPLUS_FEATURE_SCHED_ASSIST
+	init_task_ux_info(p);
+#endif /* OPLUS_FEATURE_SCHED_ASSIST */
+#ifdef OPLUS_FEATURE_HEALTHINFO
+#ifdef CONFIG_OPLUS_JANK_INFO
+	p->jank_trace = 0;
+	memset(&p->jank_info, 0, sizeof(struct jank_monitor_info));
+#endif
+#endif /* OPLUS_FEATURE_HEALTHINFO */
 	/* Perform scheduler related setup. Assign this task to a CPU. */
 	retval = sched_fork(clone_flags, p);
 	if (retval)
@@ -2171,14 +2182,9 @@ static __latent_entropy struct task_struct *copy_process(
 	/* ok, now we should be set up.. */
 	p->pid = pid_nr(pid);
 	if (clone_flags & CLONE_THREAD) {
-		p->exit_signal = -1;
 		p->group_leader = current->group_leader;
 		p->tgid = current->tgid;
 	} else {
-		if (clone_flags & CLONE_PARENT)
-			p->exit_signal = current->group_leader->exit_signal;
-		else
-			p->exit_signal = (clone_flags & CSIGNAL);
 		p->group_leader = p;
 		p->tgid = p->pid;
 	}
@@ -2223,9 +2229,14 @@ static __latent_entropy struct task_struct *copy_process(
 	if (clone_flags & (CLONE_PARENT|CLONE_THREAD)) {
 		p->real_parent = current->real_parent;
 		p->parent_exec_id = current->parent_exec_id;
+		if (clone_flags & CLONE_THREAD)
+			p->exit_signal = -1;
+		else
+			p->exit_signal = current->group_leader->exit_signal;
 	} else {
 		p->real_parent = current;
 		p->parent_exec_id = current->self_exec_id;
+		p->exit_signal = (clone_flags & CSIGNAL);
 	}
 
 	klp_copy_process(p);
@@ -2253,6 +2264,17 @@ static __latent_entropy struct task_struct *copy_process(
 	}
 
 
+#ifdef CONFIG_OPLUS_FEATURE_UID_PERF
+	/* should init uid pevents before task added into any link */
+	memset(p->uid_pevents, 0, sizeof(struct perf_event *) * UID_PERF_EVENTS);
+	memset(p->uid_counts, 0, sizeof(long long) * UID_PERF_EVENTS);
+	memset(p->uid_prev_counts, 0, sizeof(long long) * UID_PERF_EVENTS);
+	memset(p->uid_leaving_counts, 0, sizeof(long long) * UID_PERF_EVENTS);
+	memset(p->uid_group, 0, sizeof(long long) * UID_GROUP_SIZE);
+	memset(p->uid_group_prev_counts, 0, sizeof(long long) * UID_GROUP_SIZE);
+	memset(p->uid_group_snapshot_prev_counts, 0, sizeof(long long) * UID_GROUP_SIZE);
+#endif
+
 	init_task_pid_links(p);
 	if (likely(p->pid)) {
 		ptrace_init_task(p, (clone_flags & CLONE_PTRACE) || trace);
@@ -2278,6 +2300,11 @@ static __latent_entropy struct task_struct *copy_process(
 							 p->real_parent->signal->is_child_subreaper;
 			list_add_tail(&p->sibling, &p->real_parent->children);
 			list_add_tail_rcu(&p->tasks, &init_task.tasks);
+#if defined(OPLUS_FEATURE_MEMLEAK_DETECT) && defined(CONFIG_ION) && defined(CONFIG_DUMP_TASKS_MEM)
+			/* init user tasklist */
+			INIT_LIST_HEAD(&p->user_tasks);
+			update_user_tasklist(p);
+#endif
 			attach_pid(p, PIDTYPE_TGID);
 			attach_pid(p, PIDTYPE_PGID);
 			attach_pid(p, PIDTYPE_SID);
@@ -2308,22 +2335,17 @@ static __latent_entropy struct task_struct *copy_process(
 
 	trace_task_newtask(p, clone_flags);
 	uprobe_copy_process(p, clone_flags);
-
-#if defined(CONFIG_CONTROL_CENTER) || defined(CONFIG_HOUSTON)
-	if (likely(!IS_ERR(p))) {
-#ifdef CONFIG_HOUSTON
-		ht_perf_event_init(p);
-		ht_rtg_init(p);
-#endif
-#ifdef CONFIG_CONTROL_CENTER
-		cc_tsk_init((void *) p);
-#endif
-#ifdef CONFIG_ONEPLUS_FG_OPT
-		p->fuse_boost = 0;
+	copy_oom_score_adj(clone_flags, p);
+	if (!IS_ERR(p)) {
+#ifdef CONFIG_OPLUS_FEATURE_IM
+		im_tsk_init_flag((void *) p);
 #endif
 	}
-#endif
 
+#ifdef CONFIG_OPLUS_FEATURE_UID_PERF
+	if (!IS_ERR(p))
+		uid_perf_work_add(p, false);
+#endif
 	return p;
 
 bad_fork_cancel_cgroup:
@@ -2466,6 +2488,10 @@ long _do_fork(unsigned long clone_flags,
 
 	pid = get_task_pid(p, PIDTYPE_PID);
 	nr = pid_vnr(pid);
+#if defined(OPLUS_FEATURE_MEMLEAK_DETECT) && defined(CONFIG_ION) && defined(CONFIG_DUMP_TASKS_MEM)
+	//accounts process-real-phymem
+	atomic64_set(&p->ions, 0);
+#endif
 
 	if (clone_flags & CLONE_PARENT_SETTID)
 		put_user(nr, parent_tidptr);

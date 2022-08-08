@@ -200,26 +200,6 @@ config BRIDGE_NETFILTER
 
 	  If unsure, say N.
 
-config SLA
-	bool "to monitor netlink traffic"
-	default n
-	help
-	  Realtime netlink traffic monitor.
-	  The purpose of this is to monitor the ipv4 packet status and
-	  switch between each interface.
-
-	  If unsure, say n.
-
-config SLA_ALGO
-	bool "op algo"
-	default n
-	help
-	  Realtime netlink traffic monitor.
-	  The purpose of this is to monitor the ipv4 packet status and
-	  switch between each interface.
-
-	  If unsure, say n.
-
 source "net/netfilter/Kconfig"
 source "net/ipv4/netfilter/Kconfig"
 source "net/ipv6/netfilter/Kconfig"
@@ -493,3 +473,12 @@ config HAVE_CBPF_JIT
 # Extended BPF JIT (eBPF)
 config HAVE_EBPF_JIT
 	bool
+
+
+
+source "net/oplus_score/Kconfig"
+
+
+source "net/oplus_connectivity_sla/Kconfig"
+
+source "net/oplus_modules/Kconfig"

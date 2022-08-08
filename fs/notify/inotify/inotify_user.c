@@ -583,6 +583,8 @@ static int inotify_new_watch(struct fsnotify_group *group,
 
 	/* increment the number of watches the user has */
 	if (!inc_inotify_watches(group->inotify_data.ucounts)) {
+		if (printk_ratelimit())
+			printk(KERN_ERR "inotify_new_watch:return false,uid=%ul\n", current_uid());
 		inotify_remove_from_idr(group, tmp_i_mark);
 		ret = -ENOSPC;
 		goto out_err;
@@ -750,9 +752,10 @@ SYSCALL_DEFINE3(inotify_add_watch, int, fd, const char __user *, pathname,
 		goto fput_and_out;
 
 	/* support stacked filesystems */
-	if(path.dentry && path.dentry->d_op) {
+	if (path.dentry && path.dentry->d_op) {
 		if (path.dentry->d_op->d_canonical_path) {
-			path.dentry->d_op->d_canonical_path(&path, &alteredpath);
+			path.dentry->d_op->d_canonical_path(&path,
+							    &alteredpath);
 			canonical_path = &alteredpath;
 			path_put(&path);
 		}

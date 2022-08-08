@@ -23,6 +23,10 @@
 
 /* sys I/F for thermal zone */
 
+#ifdef OPLUS_BUG_STABILITY
+#include <linux/vmalloc.h>
+#endif /* OPLUS_BUG_STABILITY */
+
 static ssize_t
 type_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
@@ -37,7 +41,11 @@ temp_show(struct device *dev, struct device_attribute *attr, char *buf)
 	struct thermal_zone_device *tz = to_thermal_zone(dev);
 	int temperature, ret;
 
+#ifdef OPLUS_BUG_STABILITY
+	ret = thermal_zone_get_temp_workaround(tz, &temperature);
+#else
 	ret = thermal_zone_get_temp(tz, &temperature);
+#endif
 
 	if (ret)
 		return ret;
@@ -1064,6 +1072,12 @@ static void cooling_device_stats_setup(struct thermal_cooling_device *cdev)
 	var += sizeof(*stats->trans_table) * states * states;
 
 	stats = kzalloc(var, GFP_KERNEL);
+#ifdef OPLUS_BUG_STABILITY
+	if (!stats) {
+		dev_err(&cdev->device, "need buffer size=%d, try to the vzalloc() func!\n", var);
+		stats = vzalloc(var);
+	}
+#endif
 	if (!stats)
 		return;
 
@@ -1142,6 +1156,26 @@ trip_point_show(struct device *dev, struct device_attribute *attr, char *buf)
 		return sprintf(buf, "-1\n");
 	else
 		return sprintf(buf, "%d\n", instance->trip);
+}
+
+ssize_t trip_point_store(struct device *dev, struct device_attribute *attr,
+			 const char *buf, size_t count)
+{
+	struct thermal_instance *instance;
+	int ret, trip;
+
+	ret = kstrtoint(buf, 0, &trip);
+	if (ret)
+		return ret;
+
+	instance = container_of(attr, struct thermal_instance, attr);
+
+	if (trip >= instance->tz->trips || trip < THERMAL_TRIPS_NONE)
+		return -EINVAL;
+
+	instance->trip = trip;
+
+	return count;
 }
 
 ssize_t

@@ -8,9 +8,10 @@
 #include <linux/mm.h>
 #include <linux/quicklist.h>
 #include <linux/cma.h>
-#ifdef CONFIG_ONEPLUS_HEALTHINFO
-#include <linux/oem/oneplus_ion.h>
-#endif
+
+#ifdef OPLUS_FEATURE_HEALTHINFO
+#include <linux/healthinfo/ion.h>
+#endif /* OPLUS_FEATURE_HEALTHINFO */
 
 void show_mem(unsigned int filter, nodemask_t *nodemask)
 {
@@ -52,7 +53,7 @@ void show_mem(unsigned int filter, nodemask_t *nodemask)
 #ifdef CONFIG_MEMORY_FAILURE
 	printk("%lu pages hwpoisoned\n", atomic_long_read(&num_poisoned_pages));
 #endif
-#ifdef CONFIG_ONEPLUS_HEALTHINFO
-	printk("%lu pages ion total used\n", ion_total() >> PAGE_SHIFT);
-#endif
+#ifdef OPLUS_FEATURE_HEALTHINFO
+	printk("%lu pages ion total used\n", ion_total()>> PAGE_SHIFT);
+#endif /* OPLUS_FEATURE_HEALTHINFO */
 }

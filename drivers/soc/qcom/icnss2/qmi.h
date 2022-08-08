@@ -8,6 +8,8 @@
 
 #define QDSS_TRACE_SEG_LEN_MAX 32
 #define QDSS_TRACE_FILE_NAME_MAX 16
+#define M3_SEGMENTS_SIZE_MAX 10
+#define M3_SEGMENT_NAME_LEN_MAX 16
 
 struct icnss_mem_seg {
 	u64 addr;
@@ -19,6 +21,19 @@ struct icnss_qmi_event_qdss_trace_save_data {
 	u32 mem_seg_len;
 	struct icnss_mem_seg mem_seg[QDSS_TRACE_SEG_LEN_MAX];
 	char file_name[QDSS_TRACE_FILE_NAME_MAX + 1];
+};
+
+struct icnss_m3_segment {
+	u32 type;
+	u64 addr;
+	u64 size;
+	char name[M3_SEGMENT_NAME_LEN_MAX + 1];
+};
+
+struct icnss_m3_upload_segments_req_data {
+	u32 pdev_id;
+	u32 no_of_valid_segments;
+	struct icnss_m3_segment m3_segment[M3_SEGMENTS_SIZE_MAX];
 };
 
 #ifndef CONFIG_ICNSS2_QMI
@@ -129,7 +144,8 @@ int wlfw_qdss_trace_mem_info_send_sync(struct icnss_priv *priv)
 	return 0;
 }
 
-int wlfw_exit_power_save_send_msg(struct icnss_priv *priv)
+int wlfw_power_save_send_msg(struct icnss_priv *priv,
+			     enum wlfw_power_save_mode_v01 mode)
 {
 	return 0;
 }
@@ -142,6 +158,12 @@ int icnss_wlfw_get_info_send_sync(struct icnss_priv *priv, int type,
 
 int wlfw_send_soc_wake_msg(struct icnss_priv *priv,
 			   enum wlfw_soc_wake_enum_v01 type)
+{
+	return 0;
+}
+
+int icnss_wlfw_m3_dump_upload_done_send_sync(struct icnss_priv *priv,
+					     u32 pdev_id, int status)
 {
 	return 0;
 }
@@ -180,11 +202,14 @@ int wlfw_wlan_mode_send_sync_msg(struct icnss_priv *priv,
 				 enum wlfw_driver_mode_enum_v01 mode);
 int icnss_wlfw_bdf_dnld_send_sync(struct icnss_priv *priv, u32 bdf_type);
 int wlfw_qdss_trace_mem_info_send_sync(struct icnss_priv *priv);
-int wlfw_exit_power_save_send_msg(struct icnss_priv *priv);
+int wlfw_power_save_send_msg(struct icnss_priv *priv,
+			     enum wlfw_power_save_mode_v01 mode);
 int icnss_wlfw_get_info_send_sync(struct icnss_priv *priv, int type,
 				  void *cmd, int cmd_len);
 int wlfw_send_soc_wake_msg(struct icnss_priv *priv,
 			   enum wlfw_soc_wake_enum_v01 type);
+int icnss_wlfw_m3_dump_upload_done_send_sync(struct icnss_priv *priv,
+					     u32 pdev_id, int status);
 #endif
 
 #endif /* __ICNSS_QMI_H__*/

@@ -1185,7 +1185,16 @@ static inline int _wait_for_room_in_context_queue(
 		spin_lock(&drawctxt->lock);
 		trace_adreno_drawctxt_wake(drawctxt);
 
-		if (ret <= 0)
+		/*
+		 * Account for the possibility that the context got invalidated
+		 * while we were sleeping
+		 */
+
+		if (ret >= 1) {
+			ret = _check_context_state(&drawctxt->base);
+			if (ret)
+				return ret;
+		} else
 			return (ret == 0) ? -ETIMEDOUT : (int) ret;
 	}
 
@@ -1200,15 +1209,7 @@ static unsigned int _check_context_state_to_queue_cmds(
 	if (ret)
 		return ret;
 
-	ret = _wait_for_room_in_context_queue(drawctxt);
-	if (ret)
-		return ret;
-
-	/*
-	 * Account for the possiblity that the context got invalidated
-	 * while we were sleeping
-	 */
-	return _check_context_state(&drawctxt->base);
+	return _wait_for_room_in_context_queue(drawctxt);
 }
 
 static void _queue_drawobj(struct adreno_context *drawctxt,
@@ -1670,7 +1671,7 @@ static inline const char *_kgsl_context_comm(struct kgsl_context *context)
 #define pr_fault(_d, _c, fmt, args...) \
 		dev_err((_d)->dev, "%s[%d]: " fmt, \
 		_kgsl_context_comm((_c)->context), \
-		(_c)->context->proc_priv->pid, ##args)
+		pid_nr((_c)->context->proc_priv->pid), ##args)
 
 
 static void adreno_fault_header(struct kgsl_device *device,
@@ -1753,26 +1754,6 @@ void adreno_fault_skipcmd_detached(struct adreno_device *adreno_dev,
 			"gpu detached context %d\n", drawobj->context->id);
 		clear_bit(ADRENO_CONTEXT_SKIP_CMD, &drawctxt->base.priv);
 	}
-}
-
-
-static void kgsl_send_uevent_cmd_notify(struct kgsl_device *desc, int contextId,
-		int timestamp)
-{
-	char *envp[4];
-	char *title = "GPU_CMD_PAGE_FAULT";
-
-	if (!desc)
-		return;
-
-	envp[0] = kasprintf(GFP_KERNEL, "title=%s", title);
-	envp[1] = kasprintf(GFP_KERNEL, "cntId=%d", contextId);
-	envp[2] = kasprintf(GFP_KERNEL, "timestamp=%d", timestamp);
-	envp[3] = NULL;
-	kobject_uevent_env(&desc->dev->kobj, KOBJ_CHANGE, envp);
-	kfree(envp[0]);
-	kfree(envp[1]);
-	kfree(envp[2]);
 }
 
 /**
@@ -1945,8 +1926,6 @@ static void process_cmdobj_fault(struct kgsl_device *device,
 
 	pr_context(device, drawobj->context, "gpu %s ctx %d ts %d\n",
 		state, drawobj->context->id, drawobj->timestamp);
-
-	kgsl_send_uevent_cmd_notify(device, drawobj->context->id, drawobj->timestamp);
 
 	/* Mark the context as failed */
 	mark_guilty_context(device, drawobj->context->id);
@@ -2184,6 +2163,10 @@ static int dispatcher_do_fault(struct adreno_device *adreno_dev)
 	if (gx_on)
 		adreno_readreg64(adreno_dev, ADRENO_REG_CP_RB_BASE,
 			ADRENO_REG_CP_RB_BASE_HI, &base);
+
+	#if defined(OPLUS_FEATURE_GPU_MINIDUMP)
+	device->snapshotfault = fault;
+	#endif /*OPLUS_FEATURE_GPU_MINIDUMP*/
 
 	/*
 	 * Force the CP off for anything but a hard fault to make sure it is

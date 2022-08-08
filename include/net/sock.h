@@ -73,6 +73,7 @@
 #include <linux/net_tstamp.h>
 #include <net/smc.h>
 #include <net/l3mdev.h>
+#include <linux/android_kabi.h>
 
 /*
  * This structure really needs to be cleaned up.
@@ -187,9 +188,14 @@ struct sock_common {
 	struct proto		*skc_prot;
 	possible_net_t		skc_net;
 
-	/* WIFI MODIFICATION */
-	u32 skc_op_mark;
-	/* WIFI MODIFICATION */
+	char skc_cmdline[TASK_COMM_LEN];
+
+	//#ifdef OPLUS_FEATURE_NWPOWER
+	u32 skc_oplus_pid;
+	u64 skc_oplus_last_rcv_stamp[2];//index 0 = last, index 1 = now
+	u64 skc_oplus_last_send_stamp[2];//index 0 = last, index 1 = now
+	//#endif /* OPLUS_FEATURE_NWPOWER */
+
 
 #if IS_ENABLED(CONFIG_IPV6)
 	struct in6_addr		skc_v6_daddr;
@@ -367,9 +373,15 @@ struct sock {
 #define sk_incoming_cpu		__sk_common.skc_incoming_cpu
 #define sk_flags		__sk_common.skc_flags
 #define sk_rxhash		__sk_common.skc_rxhash
-/* WIFI MODIFICATION */
-#define op_sla_mark		__sk_common.skc_op_mark
-/* WIFI MODIFICATION */
+
+#define sk_cmdline		__sk_common.skc_cmdline
+
+//#ifdef OPLUS_FEATURE_NWPOWER
+#define sk_oplus_pid				__sk_common.skc_oplus_pid
+#define oplus_last_rcv_stamp		__sk_common.skc_oplus_last_rcv_stamp
+#define oplus_last_send_stamp	__sk_common.skc_oplus_last_send_stamp
+//#endif /* OPLUS_FEATURE_NWPOWER */
+
 
 	socket_lock_t		sk_lock;
 	atomic_t		sk_drops;
@@ -516,6 +528,15 @@ struct sock {
 	void                    (*sk_destruct)(struct sock *sk);
 	struct sock_reuseport __rcu	*sk_reuseport_cb;
 	struct rcu_head		sk_rcu;
+
+	ANDROID_KABI_RESERVE(1);
+	ANDROID_KABI_RESERVE(2);
+	ANDROID_KABI_RESERVE(3);
+	ANDROID_KABI_RESERVE(4);
+	ANDROID_KABI_RESERVE(5);
+	ANDROID_KABI_RESERVE(6);
+	ANDROID_KABI_RESERVE(7);
+	ANDROID_KABI_RESERVE(8);
 };
 
 enum sk_pacing {
@@ -852,6 +873,8 @@ static inline int sk_memalloc_socks(void)
 {
 	return static_branch_unlikely(&memalloc_socks_key);
 }
+
+void __receive_sock(struct file *file);
 #else
 
 static inline int sk_memalloc_socks(void)
@@ -859,6 +882,8 @@ static inline int sk_memalloc_socks(void)
 	return 0;
 }
 
+static inline void __receive_sock(struct file *file)
+{ }
 #endif
 
 static inline gfp_t sk_gfp_mask(const struct sock *sk, gfp_t gfp_mask)
@@ -903,11 +928,11 @@ static inline void __sk_add_backlog(struct sock *sk, struct sk_buff *skb)
 	skb_dst_force(skb);
 
 	if (!sk->sk_backlog.tail)
-		sk->sk_backlog.head = skb;
+		WRITE_ONCE(sk->sk_backlog.head, skb);
 	else
 		sk->sk_backlog.tail->next = skb;
 
-	sk->sk_backlog.tail = skb;
+	WRITE_ONCE(sk->sk_backlog.tail, skb);
 	skb->next = NULL;
 }
 
@@ -1782,7 +1807,6 @@ static inline int sk_rx_queue_get(const struct sock *sk)
 
 static inline void sk_set_socket(struct sock *sk, struct socket *sock)
 {
-	sk_tx_queue_clear(sk);
 	sk->sk_socket = sock;
 }
 
@@ -1930,6 +1954,11 @@ static inline void sk_dst_confirm(struct sock *sk)
 
 static inline void sock_confirm_neigh(struct sk_buff *skb, struct neighbour *n)
 {
+	#ifdef OPLUS_BUG_STABILITY
+	//Remove for [1357567],some AP doesn't send arp when it needs to send data to DUT
+	//We remove this code to send arp more frequently to notify our mac to AP
+	return;
+	#endif /* OPLUS_BUG_STABILITY */
 	if (skb_get_dst_pending_confirm(skb)) {
 		struct sock *sk = skb->sk;
 		unsigned long now = jiffies;
